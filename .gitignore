@@ -8,7 +8,6 @@
 
 # IDE 与编辑器
 .idea/
-.trae/
 .vscode/
 *.swp
 *.swo
