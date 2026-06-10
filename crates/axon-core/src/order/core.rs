@@ -1,0 +1,405 @@
+//! 订单主体
+
+use serde::{Deserialize, Serialize};
+
+use super::error::OrderError;
+use super::status::{OrderStatus, RejectReason};
+use super::tif::TimeInForce;
+use super::types::OrderType;
+use super::OrderId;
+use crate::market::Side;
+use crate::time::Timestamp;
+use crate::types::{Quantity, Symbol};
+
+/// 订单主体
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Order {
+    /// 订单 ID
+    pub id: OrderId,
+    /// 交易品种
+    pub symbol: Symbol,
+    /// 买卖方向
+    pub side: Side,
+    /// 订单类型
+    pub order_type: OrderType,
+    /// 订单总数量
+    pub quantity: Quantity,
+    /// 已成交数量
+    pub filled_quantity: Quantity,
+    /// 有效期
+    pub time_in_force: TimeInForce,
+    /// 当前状态
+    pub status: OrderStatus,
+    /// 创建时间
+    pub created_at: Timestamp,
+    /// 最近更新时间
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<Timestamp>,
+    /// 拒绝原因
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reject_reason: Option<RejectReason>,
+    /// 用户自定义标签
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_order_id: Option<String>,
+}
+
+impl Order {
+    /// 创建新订单（状态为 `Created`，`filled_quantity` 为 0）
+    pub fn new(
+        id: OrderId,
+        symbol: Symbol,
+        side: Side,
+        order_type: OrderType,
+        quantity: Quantity,
+        time_in_force: TimeInForce,
+    ) -> Self {
+        Self {
+            id,
+            symbol,
+            side,
+            order_type,
+            quantity,
+            filled_quantity: Quantity::default(),
+            time_in_force,
+            status: OrderStatus::Created,
+            created_at: Timestamp::now(),
+            updated_at: None,
+            reject_reason: None,
+            client_order_id: None,
+        }
+    }
+
+    /// 剩余可成交数量
+    #[inline]
+    pub fn remaining_quantity(&self) -> Quantity {
+        Quantity::from_f64(self.quantity.as_f64() - self.filled_quantity.as_f64())
+    }
+
+    /// 是否完全成交
+    #[inline]
+    pub fn is_filled(&self) -> bool {
+        (self.filled_quantity.as_f64() - self.quantity.as_f64()).abs() < f64::EPSILON
+    }
+
+    /// 是否可取消
+    #[inline]
+    pub fn can_cancel(&self) -> bool {
+        self.status.is_active()
+    }
+
+    /// 成交比例 `[0.0, 1.0]`
+    #[inline]
+    pub fn fill_ratio(&self) -> f64 {
+        let total = self.quantity.as_f64();
+        if total == 0.0 {
+            return 0.0;
+        }
+        self.filled_quantity.as_f64() / total
+    }
+
+    /// 记录一次成交
+    ///
+    /// 失败场景：成交量超过订单剩余量、状态不允许继续成交。
+    pub fn apply_fill(&mut self, fill_qty: Quantity) -> Result<(), OrderError> {
+        let remaining = self.quantity.as_f64() - self.filled_quantity.as_f64();
+        if fill_qty.as_f64() > remaining + f64::EPSILON {
+            return Err(OrderError::OverFill {
+                filled: fill_qty,
+                remaining: self.remaining_quantity(),
+            });
+        }
+
+        let new_filled = self.filled_quantity.as_f64() + fill_qty.as_f64();
+        self.filled_quantity = Quantity::from_f64(new_filled);
+
+        let target = if (new_filled - self.quantity.as_f64()).abs() < f64::EPSILON {
+            OrderStatus::Filled
+        } else {
+            OrderStatus::PartiallyFilled
+        };
+
+        self.transition_to(target)?;
+        self.updated_at = Some(Timestamp::now());
+        Ok(())
+    }
+
+    /// 状态转换（私有，校验合法性）
+    fn transition_to(&mut self, target: OrderStatus) -> Result<(), OrderError> {
+        if !self.status.can_transition_to(target) {
+            return Err(OrderError::InvalidStateTransition {
+                from: self.status,
+                to: target,
+            });
+        }
+        self.status = target;
+        self.updated_at = Some(Timestamp::now());
+        Ok(())
+    }
+
+    /// 取消订单
+    pub fn cancel(&mut self) -> Result<(), OrderError> {
+        if !self.can_cancel() {
+            return Err(OrderError::OrderNotActive {
+                status: self.status,
+            });
+        }
+        self.transition_to(OrderStatus::Cancelled)
+    }
+
+    /// 拒绝订单（记录原因）
+    pub fn reject(&mut self, reason: RejectReason) -> Result<(), OrderError> {
+        self.reject_reason = Some(reason);
+        if !self.status.can_transition_to(OrderStatus::Rejected) {
+            return Err(OrderError::InvalidStateTransition {
+                from: self.status,
+                to: OrderStatus::Rejected,
+            });
+        }
+        self.status = OrderStatus::Rejected;
+        self.updated_at = Some(Timestamp::now());
+        Ok(())
+    }
+
+    /// 激活订单（`Created -> Pending`）
+    pub fn activate(&mut self) -> Result<(), OrderError> {
+        self.transition_to(OrderStatus::Pending)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Price;
+
+    fn make_limit_order() -> Order {
+        Order::new(
+            1,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Limit {
+                price: Price::from_f64(100.0),
+            },
+            Quantity::from_f64(10.0),
+            TimeInForce::GTC,
+        )
+    }
+
+    #[test]
+    fn test_market_order_creation() {
+        let order = Order::new(
+            2,
+            Symbol::from("ETH-USDT"),
+            Side::Sell,
+            OrderType::Market,
+            Quantity::from_f64(5.0),
+            TimeInForce::IOC,
+        );
+        assert_eq!(order.id, 2);
+        assert_eq!(order.side, Side::Sell);
+        assert_eq!(order.order_type, OrderType::Market);
+        assert_eq!(order.quantity, Quantity::from_f64(5.0));
+        assert_eq!(order.time_in_force, TimeInForce::IOC);
+        assert_eq!(order.status, OrderStatus::Created);
+        assert_eq!(order.filled_quantity, Quantity::default());
+    }
+
+    #[test]
+    fn test_limit_order_creation() {
+        let order = make_limit_order();
+        assert_eq!(
+            order.order_type,
+            OrderType::Limit {
+                price: Price::from_f64(100.0)
+            }
+        );
+        assert!(
+            matches!(order.order_type, OrderType::Limit { price } if price == Price::from_f64(100.0))
+        );
+    }
+
+    #[test]
+    fn test_order_remaining_quantity() {
+        let order = make_limit_order();
+        assert_eq!(order.remaining_quantity(), Quantity::from_f64(10.0));
+        assert!(!order.is_filled());
+    }
+
+    #[test]
+    fn test_order_new_to_filled() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        order.apply_fill(Quantity::from_f64(10.0)).unwrap();
+        assert!(order.is_filled());
+        assert_eq!(order.status, OrderStatus::Filled);
+    }
+
+    #[test]
+    fn test_order_new_to_partial_to_filled() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        order.apply_fill(Quantity::from_f64(3.0)).unwrap();
+        assert_eq!(order.status, OrderStatus::PartiallyFilled);
+        assert_eq!(order.fill_ratio(), 0.3);
+
+        order.apply_fill(Quantity::from_f64(7.0)).unwrap();
+        assert_eq!(order.status, OrderStatus::Filled);
+        assert!(order.is_filled());
+    }
+
+    #[test]
+    fn test_order_cancelled() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        order.cancel().unwrap();
+        assert_eq!(order.status, OrderStatus::Cancelled);
+        // 再次取消应失败
+        assert!(order.cancel().is_err());
+    }
+
+    #[test]
+    fn test_order_rejected() {
+        let mut order = make_limit_order();
+        order.reject(RejectReason::InsufficientFunds).unwrap();
+        assert_eq!(order.status, OrderStatus::Rejected);
+        assert_eq!(order.reject_reason, Some(RejectReason::InsufficientFunds));
+        // 已拒绝的订单不能再次拒绝
+        assert!(order.reject(RejectReason::Other).is_err());
+    }
+
+    #[test]
+    fn test_overfill_returns_error() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        // 申请成交 11.0 > 剩余 10.0
+        let result = order.apply_fill(Quantity::from_f64(11.0));
+        assert!(matches!(result, Err(OrderError::OverFill { .. })));
+    }
+
+    #[test]
+    fn test_ioc_order_partial_fill_cancel() {
+        // IOC 语义在撮合引擎中实现，此处仅验证状态机的合法性
+        let mut order = Order::new(
+            3,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Market,
+            Quantity::from_f64(10.0),
+            TimeInForce::IOC,
+        );
+        order.activate().unwrap();
+        // 部分成交
+        order.apply_fill(Quantity::from_f64(3.0)).unwrap();
+        assert_eq!(order.status, OrderStatus::PartiallyFilled);
+        // IOC 撮合引擎应将剩余部分取消
+        order.cancel().unwrap();
+        assert_eq!(order.status, OrderStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_fok_order_partial_fill_reject() {
+        // FOK 语义在撮合引擎中实现：部分成交则整单拒绝
+        let mut order = Order::new(
+            4,
+            Symbol::from("BTC-USDT"),
+            Side::Sell,
+            OrderType::Market,
+            Quantity::from_f64(10.0),
+            TimeInForce::FOK,
+        );
+        order.activate().unwrap();
+        // 撮合引擎若只能部分成交，会在 fill 前调用 reject
+        order.reject(RejectReason::Other).unwrap();
+        assert_eq!(order.status, OrderStatus::Rejected);
+    }
+
+    #[test]
+    fn test_gtc_order_persists() {
+        let mut order = Order::new(
+            5,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Limit {
+                price: Price::from_f64(100.0),
+            },
+            Quantity::from_f64(10.0),
+            TimeInForce::GTC,
+        );
+        order.activate().unwrap();
+        // 部分成交后仍处于活跃状态
+        order.apply_fill(Quantity::from_f64(2.0)).unwrap();
+        assert!(order.can_cancel());
+        assert!(!order.is_filled());
+    }
+
+    #[test]
+    fn test_iceberg_order_reveals_partial() {
+        let order = Order::new(
+            6,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Iceberg {
+                visible: Quantity::from_f64(1.0),
+                hidden: Quantity::from_f64(9.0),
+            },
+            Quantity::from_f64(10.0),
+            TimeInForce::GTC,
+        );
+        assert!(order.order_type.is_iceberg());
+        assert_eq!(
+            order.order_type.iceberg_visible(),
+            Some(Quantity::from_f64(1.0))
+        );
+    }
+
+    #[test]
+    fn test_stop_order_triggers() {
+        let order = Order::new(
+            7,
+            Symbol::from("BTC-USDT"),
+            Side::Sell,
+            OrderType::Stop {
+                trigger: Price::from_f64(95.0),
+            },
+            Quantity::from_f64(5.0),
+            TimeInForce::GTC,
+        );
+        assert!(order.order_type.is_conditional());
+        assert_eq!(
+            order.order_type.trigger_price(),
+            Some(Price::from_f64(95.0))
+        );
+    }
+
+    #[test]
+    fn test_invalid_state_transition_returns_error() {
+        let mut order = make_limit_order();
+        // 还没有 activate（Created），直接 apply_fill 不合法
+        // 因为 PartiallyFilled 只能从 Pending 转换
+        let result = order.apply_fill(Quantity::from_f64(1.0));
+        assert!(matches!(
+            result,
+            Err(OrderError::InvalidStateTransition { .. })
+        ));
+    }
+
+    #[test]
+    fn test_client_order_id_optional() {
+        let mut order = make_limit_order();
+        assert!(order.client_order_id.is_none());
+        order.client_order_id = Some("strategy-001".to_string());
+        assert_eq!(order.client_order_id.as_deref(), Some("strategy-001"));
+    }
+
+    #[test]
+    fn test_order_fill_ratio_zero_quantity_safe() {
+        let order = Order::new(
+            8,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Market,
+            Quantity::default(),
+            TimeInForce::GTC,
+        );
+        assert_eq!(order.fill_ratio(), 0.0);
+    }
+}

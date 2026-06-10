@@ -1,0 +1,35 @@
+[package]
+name = "axon-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON 核心类型：时间戳、价格、订单、事件、错误定义"
+
+[features]
+# 默认 feature：序列化与时间支持
+default = ["serde", "tracing"]
+# 序列化
+serde = ["dep:serde", "dep:rust_decimal"]
+# 异步追踪（启用 tokio 集成）
+async = ["dep:tokio"]
+# 后续阶段启用（占位）
+arrow = []
+
+[dependencies]
+serde = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+chrono = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+bincode = "1.3"

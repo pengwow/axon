@@ -1,0 +1,131 @@
+//! 冲击模型 trait
+
+use super::linear::LinearImpactModel;
+use super::power_law::PowerLawImpactModel;
+use super::types::{Impact, ImpactModelConfig};
+use crate::market::{OrderBookSnapshot, Side};
+use crate::types::Quantity;
+
+/// 冲击模型 trait
+///
+/// 实现方需提供 `compute_impact` 与元数据。
+pub trait ImpactModel: Send + Sync {
+    /// 计算市场冲击
+    fn compute_impact(
+        &self,
+        order_quantity: Quantity,
+        side: Side,
+        order_book: &OrderBookSnapshot,
+    ) -> Impact;
+
+    /// 模型名称
+    fn name(&self) -> &str;
+
+    /// 模型参数摘要
+    fn params(&self) -> String;
+}
+
+// ─── 工厂函数 ──────────────────────────────────────────────
+
+/// 创建默认线性冲击模型（coefficient = 0.05）
+pub fn linear_impact() -> LinearImpactModel {
+    LinearImpactModel::default()
+}
+
+/// 创建默认幂律冲击模型（square-root law：coefficient = 0.1, exponent = 0.5）
+pub fn sqrt_impact() -> PowerLawImpactModel {
+    PowerLawImpactModel::default()
+}
+
+/// 根据配置创建模型
+pub fn create_model(config: ImpactModelConfig) -> Box<dyn ImpactModel> {
+    match config {
+        ImpactModelConfig::Linear {
+            coefficient,
+            depth_levels,
+            instantaneous_ratio,
+        } => Box::new(
+            LinearImpactModel::new(coefficient)
+                .with_depth(depth_levels)
+                .with_instantaneous_ratio(instantaneous_ratio),
+        ),
+        ImpactModelConfig::PowerLaw {
+            coefficient,
+            exponent,
+            depth_levels,
+            instantaneous_ratio,
+        } => Box::new(
+            PowerLawImpactModel::new(coefficient, exponent)
+                .with_depth(depth_levels)
+                .with_instantaneous_ratio(instantaneous_ratio),
+        ),
+    }
+}
+
+// 抑制 unused 警告（在 mod.rs 中通过 pub use re-export 重新导出）
+#[allow(dead_code)]
+fn _assert_send_sync<T: Send + Sync>() {}
+
+#[allow(dead_code)]
+fn _assert_impact_model_send_sync<T: ImpactModel>() {
+    _assert_send_sync::<T>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::market::{OrderBookLevel, OrderBookSnapshot};
+    use crate::time::Timestamp;
+    use crate::types::{Price, Quantity};
+
+    fn sample_ob() -> OrderBookSnapshot {
+        OrderBookSnapshot {
+            timestamp: Timestamp::from_nanos(0),
+            bids: vec![OrderBookLevel {
+                price: Price::from_f64(99.0),
+                quantity: Quantity::from_f64(100.0),
+            }],
+            asks: vec![OrderBookLevel {
+                price: Price::from_f64(100.0),
+                quantity: Quantity::from_f64(100.0),
+            }],
+        }
+    }
+
+    #[test]
+    fn test_create_model_linear() {
+        let m: Box<dyn ImpactModel> = create_model(ImpactModelConfig::Linear {
+            coefficient: 0.05,
+            depth_levels: 5,
+            instantaneous_ratio: 0.7,
+        });
+        assert_eq!(m.name(), "LinearImpact");
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        // 0.05 × (10 / 100) = 0.005
+        assert!((impact.total() - 0.005).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_create_model_power_law() {
+        let m: Box<dyn ImpactModel> = create_model(ImpactModelConfig::PowerLaw {
+            coefficient: 0.1,
+            exponent: 0.5,
+            depth_levels: 5,
+            instantaneous_ratio: 0.7,
+        });
+        assert_eq!(m.name(), "PowerLawImpact");
+    }
+
+    #[test]
+    fn test_linear_impact_factory() {
+        let m = linear_impact();
+        assert_eq!(m.name(), "LinearImpact");
+    }
+
+    #[test]
+    fn test_sqrt_impact_factory() {
+        let m = sqrt_impact();
+        assert_eq!(m.name(), "PowerLawImpact");
+        assert!(m.params().contains("exponent=0.5"));
+    }
+}

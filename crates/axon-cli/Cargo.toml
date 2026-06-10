@@ -1,0 +1,25 @@
+[package]
+name = "axon-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON 命令行工具入口"
+
+[[bin]]
+name = "axon"
+path = "src/main.rs"
+
+[features]
+# 默认 feature：仅含回测 + 监控
+default = ["backtest"]
+# 各业务功能（默认仅启用 backtest）
+backtest = ["dep:axon-backtest"]
+
+[dependencies]
+axon-core = { workspace = true }
+axon-backtest = { workspace = true, optional = true }

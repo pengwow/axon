@@ -1,0 +1,75 @@
+[workspace]
+resolver = "2"
+# 工作区成员：按阶段逐步引入，Phase 0 仅含最小骨架
+members = [
+    "crates/axon-core",
+    "crates/axon-backtest",
+    "crates/axon-cli",
+]
+
+# 统一的目标目录，加速增量编译
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.96.0"
+license = "Apache-2.0"
+repository = "https://github.com/axon-team/axon"
+homepage = "https://github.com/axon-team/axon"
+documentation = "https://docs.rs/axon"
+
+# 统一作者信息
+authors = ["AXON Team <team@axon.dev>"]
+
+# Workspace 级别的共享依赖，方便各 crate 引用同一版本
+[workspace.dependencies]
+# 内部 crate
+axon-core = { path = "crates/axon-core" }
+axon-backtest = { path = "crates/axon-backtest" }
+
+# 错误处理
+thiserror = "1.0"
+anyhow = "1.0"
+
+# 序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 日志 / 追踪
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 并发原语
+crossbeam-channel = "0.5"
+
+# 异步运行时
+tokio = { version = "1.35", features = ["full"] }
+
+# 时间
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+# 数值类型
+rust_decimal = { version = "1.35", features = ["serde"] }
+
+# 随机数（用于延迟/冲击模型采样）
+rand = "0.8"
+
+# 测试辅助
+proptest = "1.4"
+pretty_assertions = "1.4"
+
+# Workspace 级 profile 配置
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+# Dev profile 启用调试符号便于 cargo test
+[profile.dev]
+debug = true
+opt-level = 0
+
+# Benchmark profile
+[profile.bench]
+debug = true
+opt-level = 3

@@ -1,0 +1,846 @@
+//! L1 撮合引擎：基础价格-时间优先撮合
+//!
+//! L1 支持：
+//! - 限价单（Limit）
+//! - 市价单（Market）
+//! - 立即成交或取消（IOC）
+//! - 全部成交或取消（FOK）
+//!
+//! 不支持：止损单、止损限价单、冰山单（属于 L2/L3 范围）。
+//!
+//! # 算法
+//!
+//! 价格-时间优先：
+//! 1. 价格优先：买单按价格降序匹配，卖单按价格升序匹配
+//! 2. 时间优先：同价位按到达时间升序匹配
+//!
+//! # 数据结构
+//!
+//! - `BTreeMap<Price, VecDeque<Order>>`：价格-时间优先队列
+//! - `HashMap<OrderId, (Side, Price)>`：订单索引（用于快速取消）
+
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use axon_core::market::Side;
+use axon_core::order::{Order, OrderType, TimeInForce};
+use axon_core::types::{Price, Quantity, Symbol};
+
+use super::error::{MatchingError, MatchingResult};
+use super::types::{MatchFill, OrderBookLevel, SubmitResult};
+
+/// 撮合引擎 trait
+pub trait MatchingEngine {
+    /// 提交订单并执行撮合
+    fn submit(&mut self, order: Order) -> SubmitResult;
+
+    /// 取消订单
+    ///
+    /// 返回是否成功取消（订单存在且未完全成交）
+    fn cancel(&mut self, order_id: u64) -> bool;
+
+    /// 获取最优买价
+    fn best_bid(&self) -> Option<Price>;
+
+    /// 获取最优卖价
+    fn best_ask(&self) -> Option<Price>;
+
+    /// 计算买卖价差
+    fn spread(&self) -> Option<Price>;
+
+    /// 查询指定深度的订单簿快照
+    ///
+    /// 返回 `(bids, asks)`，买单按价格降序，卖单按价格升序。
+    fn depth(&self, levels: usize) -> (Vec<OrderBookLevel>, Vec<OrderBookLevel>);
+
+    /// 当前活跃订单数
+    fn active_order_count(&self) -> usize;
+}
+
+/// 内部订单簿侧类型
+///
+/// 同一价位下的订单队列（时间优先），按价格聚合形成订单簿的一侧。
+pub type PriceLevel = VecDeque<Order>;
+
+/// 订单簿一侧：`价格 -> 价格级别`
+pub type OrderBookSide = BTreeMap<Price, PriceLevel>;
+
+/// L1 撮合引擎
+pub struct L1MatchingEngine {
+    /// 买单簿（BTreeMap 升序，最优买价在末尾）
+    bids: OrderBookSide,
+    /// 卖单簿（BTreeMap 升序，最优卖价在开头）
+    asks: OrderBookSide,
+    /// 成交序列号（单调递增）
+    trade_sequence: AtomicU64,
+    /// 活跃订单索引：`order_id -> (side, price)` 快速定位
+    order_index: HashMap<u64, (Side, Price)>,
+    /// 引擎处理的交易品种（确保只处理单一品种）
+    symbol: Option<Symbol>,
+}
+
+impl Default for L1MatchingEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl L1MatchingEngine {
+    /// 创建 L1 撮合引擎
+    pub fn new() -> Self {
+        Self {
+            bids: BTreeMap::new(),
+            asks: BTreeMap::new(),
+            trade_sequence: AtomicU64::new(0),
+            order_index: HashMap::new(),
+            symbol: None,
+        }
+    }
+
+    /// 绑定交易品种
+    pub fn with_symbol(symbol: Symbol) -> Self {
+        Self {
+            symbol: Some(symbol),
+            ..Self::new()
+        }
+    }
+
+    /// 获取当前已分配的成交 ID 数量
+    pub fn fill_count(&self) -> u64 {
+        self.trade_sequence.load(Ordering::Relaxed)
+    }
+
+    /// 获取下一个成交 ID（兼容辅助方法；内部循环中直接使用原子以避免借用冲突）
+    #[allow(dead_code)]
+    #[inline]
+    fn next_fill_id(&self) -> u64 {
+        self.trade_sequence.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// 提取订单的限价（市价单返回 `None`）
+    #[inline]
+    fn limit_price(order: &Order) -> Option<Price> {
+        order.order_type.limit_price()
+    }
+
+    /// 验证订单基础参数
+    fn validate(&self, order: &Order) -> MatchingResult<()> {
+        // 限价单价格必须 > 0
+        if let Some(p) = Self::limit_price(order) {
+            if p.as_f64() <= 0.0 {
+                return Err(MatchingError::InvalidPrice { price: p });
+            }
+        }
+        if order.quantity.as_f64() <= 0.0 {
+            return Err(MatchingError::InvalidQuantity {
+                quantity: order.quantity,
+            });
+        }
+        if let Some(ref expected) = self.symbol {
+            if &order.symbol != expected {
+                return Err(MatchingError::InvalidModification {
+                    reason: format!("符号不匹配: 引擎绑定 {}，订单 {}", expected, order.symbol),
+                });
+            }
+        }
+        // L1 不支持止损/冰山
+        match order.order_type {
+            OrderType::Market | OrderType::Limit { .. } => Ok(()),
+            _ => Err(MatchingError::UnsupportedOrderType(format!(
+                "{:?}",
+                order.order_type
+            ))),
+        }
+    }
+
+    /// FOK 预检：检查订单簿中是否有足够深度可以全部成交
+    fn check_fok_fillable(&self, taker: &Order) -> bool {
+        let required = taker.remaining_quantity().as_f64();
+        match taker.side {
+            Side::Buy => {
+                // 买单：按卖价升序累加可成交量
+                let mut available = 0.0;
+                for (_, orders) in self.asks.iter() {
+                    if let Some(taker_price) = Self::limit_price(taker) {
+                        if taker_price.as_f64() < orders_price(orders) {
+                            break;
+                        }
+                    }
+                    for maker in orders.iter() {
+                        if !maker.status.is_terminal() {
+                            available += maker.remaining_quantity().as_f64();
+                            if available >= required {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            Side::Sell => {
+                // 卖单：按买价降序累加可成交量
+                let mut available = 0.0;
+                for (_, orders) in self.bids.iter().rev() {
+                    if let Some(taker_price) = Self::limit_price(taker) {
+                        if taker_price.as_f64() > orders_price(orders) {
+                            break;
+                        }
+                    }
+                    for maker in orders.iter() {
+                        if !maker.status.is_terminal() {
+                            available += maker.remaining_quantity().as_f64();
+                            if available >= required {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    /// 买单与卖单簿撮合
+    fn match_against_asks(&mut self, taker: &mut Order) -> Vec<MatchFill> {
+        let mut fills = Vec::new();
+        let mut empty_prices = Vec::new();
+
+        for (price, orders) in self.asks.iter_mut() {
+            // 限价单：买价 < 卖价时停止
+            if let Some(taker_price) = Self::limit_price(taker) {
+                if taker_price.as_f64() < price.as_f64() {
+                    break;
+                }
+            }
+
+            loop {
+                // 取出队首 maker
+                let is_terminal = orders
+                    .front()
+                    .map(|m| m.status.is_terminal())
+                    .unwrap_or(true);
+                if is_terminal {
+                    if orders.is_empty() {
+                        break;
+                    }
+                    orders.pop_front();
+                    continue;
+                }
+
+                let taker_remaining = taker.remaining_quantity();
+                let maker_remaining = orders.front().map(|m| m.remaining_quantity()).unwrap();
+                let fill_qty = taker_remaining.min(maker_remaining);
+
+                // 收集 fill 所需字段（避免 &orders 与 &self 同时存在）
+                let fill_id = self.trade_sequence.fetch_add(1, Ordering::Relaxed);
+                let taker_id = taker.id;
+                let taker_side = taker.side;
+                let taker_created = taker.created_at;
+                let maker_id = orders.front().map(|m| m.id).unwrap();
+                let fill = MatchFill {
+                    fill_id,
+                    taker_order_id: taker_id,
+                    maker_order_id: maker_id,
+                    price: *price,
+                    quantity: fill_qty,
+                    taker_side,
+                    timestamp: taker_created,
+                };
+                fills.push(fill);
+
+                // 更新 taker 已成交量
+                taker.filled_quantity =
+                    Quantity::from_f64(taker.filled_quantity.as_f64() + fill_qty.as_f64());
+
+                // 更新 maker 已成交量并更新状态
+                if let Some(maker) = orders.front_mut() {
+                    let _ = maker.apply_fill(fill_qty);
+                }
+
+                // taker 已全部成交
+                if (taker.remaining_quantity().as_f64()).abs() < f64::EPSILON {
+                    return fills;
+                }
+            }
+
+            if orders.is_empty() {
+                empty_prices.push(*price);
+            }
+        }
+
+        for price in empty_prices {
+            self.asks.remove(&price);
+        }
+        fills
+    }
+
+    /// 卖单与买单簿撮合
+    fn match_against_bids(&mut self, taker: &mut Order) -> Vec<MatchFill> {
+        let mut fills = Vec::new();
+        let mut empty_prices = Vec::new();
+
+        // 收集需要撮合的价格级别（从高到低）
+        let prices: Vec<Price> = self.bids.keys().rev().copied().collect();
+
+        for price in prices {
+            let stop = {
+                let Some(orders) = self.bids.get_mut(&price) else {
+                    continue;
+                };
+                // 限价单：卖价 > 买价时停止
+                if let Some(taker_price) = Self::limit_price(taker) {
+                    if taker_price.as_f64() > price.as_f64() {
+                        break;
+                    }
+                }
+
+                loop {
+                    let is_terminal = orders
+                        .front()
+                        .map(|m| m.status.is_terminal())
+                        .unwrap_or(true);
+                    if is_terminal {
+                        if orders.is_empty() {
+                            break;
+                        }
+                        orders.pop_front();
+                        continue;
+                    }
+
+                    let taker_remaining = taker.remaining_quantity();
+                    let maker_remaining = orders.front().map(|m| m.remaining_quantity()).unwrap();
+                    let fill_qty = taker_remaining.min(maker_remaining);
+
+                    // 直接访问原子，避免借用冲突
+                    let fill_id = self.trade_sequence.fetch_add(1, Ordering::Relaxed);
+                    let taker_id = taker.id;
+                    let taker_side = taker.side;
+                    let taker_created = taker.created_at;
+                    let maker_id = orders.front().map(|m| m.id).unwrap();
+                    let fill = MatchFill {
+                        fill_id,
+                        taker_order_id: taker_id,
+                        maker_order_id: maker_id,
+                        price,
+                        quantity: fill_qty,
+                        taker_side,
+                        timestamp: taker_created,
+                    };
+                    fills.push(fill);
+
+                    // 更新 taker 已成交量
+                    taker.filled_quantity =
+                        Quantity::from_f64(taker.filled_quantity.as_f64() + fill_qty.as_f64());
+
+                    // 更新 maker
+                    if let Some(maker) = orders.front_mut() {
+                        let _ = maker.apply_fill(fill_qty);
+                    }
+
+                    if (taker.remaining_quantity().as_f64()).abs() < f64::EPSILON {
+                        break;
+                    }
+                }
+
+                if orders.is_empty() {
+                    empty_prices.push(price);
+                }
+                // 检查 taker 是否完全成交
+                (taker.remaining_quantity().as_f64()).abs() < f64::EPSILON
+            };
+            if stop {
+                break;
+            }
+        }
+
+        for price in empty_prices {
+            self.bids.remove(&price);
+        }
+        fills
+    }
+
+    /// 将未成交部分挂入本方订单簿
+    fn insert_passive(&mut self, order: &Order) {
+        // 限价单按价格挂单；市价单无价格不入簿
+        let Some(price) = Self::limit_price(order) else {
+            return;
+        };
+        let book = match order.side {
+            Side::Buy => &mut self.bids,
+            Side::Sell => &mut self.asks,
+        };
+
+        let orders = book.entry(price).or_insert_with(VecDeque::new);
+        orders.push_back(order.clone());
+
+        self.order_index.insert(order.id, (order.side, price));
+    }
+}
+
+/// 获取价格级别内首个订单的价格（用于 FOK 预检中的限价比较）
+fn orders_price(orders: &PriceLevel) -> f64 {
+    orders
+        .iter()
+        .find(|o| !o.status.is_terminal())
+        .and_then(L1MatchingEngine::limit_price_static)
+        .map(|p| p.as_f64())
+        .unwrap_or(0.0)
+}
+
+impl L1MatchingEngine {
+    /// 静态方法获取订单限价（用于辅助函数）
+    #[inline]
+    fn limit_price_static(order: &Order) -> Option<Price> {
+        order.order_type.limit_price()
+    }
+}
+
+impl MatchingEngine for L1MatchingEngine {
+    fn submit(&mut self, order: Order) -> SubmitResult {
+        // 1. 验证订单
+        if let Err(_e) = self.validate(&order) {
+            let mut rejected = order;
+            let _ = rejected.reject(axon_core::order::RejectReason::Other);
+            return SubmitResult::empty(rejected.quantity);
+        }
+
+        let mut taker = order;
+        // 激活订单：Created -> Pending
+        let _ = taker.activate();
+
+        // 2. FOK 预检：若 FOK 无法全部成交，直接拒收
+        if taker.time_in_force == TimeInForce::FOK && !self.check_fok_fillable(&taker) {
+            let _ = taker.reject(axon_core::order::RejectReason::Other);
+            return SubmitResult::empty(taker.quantity);
+        }
+
+        // 3. 撮合
+        let fills = match taker.side {
+            Side::Buy => self.match_against_asks(&mut taker),
+            Side::Sell => self.match_against_bids(&mut taker),
+        };
+
+        // 4. 处理 TIF
+        let remaining = taker.remaining_quantity();
+        let is_filled = (remaining.as_f64()).abs() < f64::EPSILON;
+        let mut to_insert = !is_filled;
+
+        if !is_filled && taker.time_in_force == TimeInForce::IOC {
+            // IOC：取消剩余
+            let _ = taker.cancel();
+            to_insert = false;
+        }
+
+        // 5. 挂单
+        if to_insert && !is_filled && taker.can_cancel() {
+            self.insert_passive(&taker);
+        }
+
+        // 6. 构造结果
+        if is_filled {
+            SubmitResult::filled(fills)
+        } else if !fills.is_empty() {
+            SubmitResult::partial(fills, remaining)
+        } else {
+            SubmitResult::empty(remaining)
+        }
+    }
+
+    fn cancel(&mut self, order_id: u64) -> bool {
+        let Some((side, price)) = self.order_index.remove(&order_id) else {
+            return false;
+        };
+        let book = match side {
+            Side::Buy => &mut self.bids,
+            Side::Sell => &mut self.asks,
+        };
+        let mut found = false;
+        if let Some(orders) = book.get_mut(&price) {
+            let mut idx = 0;
+            while idx < orders.len() {
+                if orders[idx].id == order_id {
+                    let _ = orders[idx].cancel();
+                    orders.remove(idx);
+                    found = true;
+                    break;
+                }
+                idx += 1;
+            }
+            if orders.is_empty() {
+                book.remove(&price);
+            }
+        }
+        found
+    }
+
+    #[inline]
+    fn best_bid(&self) -> Option<Price> {
+        self.bids.keys().next_back().copied()
+    }
+
+    #[inline]
+    fn best_ask(&self) -> Option<Price> {
+        self.asks.keys().next().copied()
+    }
+
+    #[inline]
+    fn spread(&self) -> Option<Price> {
+        let bid = self.best_bid()?;
+        let ask = self.best_ask()?;
+        let spread = ask.as_f64() - bid.as_f64();
+        Some(Price::from_f64(spread))
+    }
+
+    fn depth(&self, levels: usize) -> (Vec<OrderBookLevel>, Vec<OrderBookLevel>) {
+        let bid_levels: Vec<OrderBookLevel> = self
+            .bids
+            .iter()
+            .rev()
+            .take(levels)
+            .map(|(price, orders)| OrderBookLevel {
+                price: *price,
+                quantity: sum_remaining(orders),
+                order_count: orders.iter().filter(|o| !o.status.is_terminal()).count(),
+            })
+            .collect();
+
+        let ask_levels: Vec<OrderBookLevel> = self
+            .asks
+            .iter()
+            .take(levels)
+            .map(|(price, orders)| OrderBookLevel {
+                price: *price,
+                quantity: sum_remaining(orders),
+                order_count: orders.iter().filter(|o| !o.status.is_terminal()).count(),
+            })
+            .collect();
+
+        (bid_levels, ask_levels)
+    }
+
+    fn active_order_count(&self) -> usize {
+        self.order_index.len()
+    }
+}
+
+/// 汇总价格级别中所有非终态订单的剩余数量
+fn sum_remaining(orders: &PriceLevel) -> axon_core::types::Quantity {
+    orders.iter().filter(|o| !o.status.is_terminal()).fold(
+        axon_core::types::Quantity::default(),
+        |acc, o| {
+            axon_core::types::Quantity::from_f64(acc.as_f64() + o.remaining_quantity().as_f64())
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axon_core::market::Side;
+    use axon_core::order::{Order, OrderType, TimeInForce};
+    use axon_core::types::{Price, Quantity, Symbol};
+
+    fn make_limit_order(id: u64, side: Side, price: f64, qty: f64, _ts: i64) -> Order {
+        Order::new(
+            id,
+            Symbol::from("BTC-USDT"),
+            side,
+            OrderType::Limit {
+                price: Price::from_f64(price),
+            },
+            Quantity::from_f64(qty),
+            TimeInForce::GTC,
+        )
+    }
+
+    #[test]
+    fn test_engine_creation() {
+        let engine = L1MatchingEngine::new();
+        assert!(engine.best_bid().is_none());
+        assert!(engine.best_ask().is_none());
+        assert_eq!(engine.fill_count(), 0);
+    }
+
+    #[test]
+    fn test_buy_limit_matches_sell_limit() {
+        let mut engine = L1MatchingEngine::new();
+        // 卖单挂单
+        let sell = make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000);
+        engine.submit(sell);
+        assert_eq!(engine.best_ask(), Some(Price::from_f64(100.0)));
+
+        // 买单以同价成交
+        let buy = make_limit_order(2, Side::Buy, 100.0, 1.0, 2_000);
+        let result = engine.submit(buy);
+        assert_eq!(result.fills.len(), 1);
+        assert!(result.is_filled);
+        assert_eq!(result.fills[0].price, Price::from_f64(100.0));
+    }
+
+    #[test]
+    fn test_sell_limit_matches_buy_limit() {
+        let mut engine = L1MatchingEngine::new();
+        let buy = make_limit_order(1, Side::Buy, 100.0, 1.0, 1_000);
+        engine.submit(buy);
+        assert_eq!(engine.best_bid(), Some(Price::from_f64(100.0)));
+
+        let sell = make_limit_order(2, Side::Sell, 100.0, 1.0, 2_000);
+        let result = engine.submit(sell);
+        assert_eq!(result.fills.len(), 1);
+        assert!(result.is_filled);
+    }
+
+    #[test]
+    fn test_partial_fill_creates_remaining_order() {
+        let mut engine = L1MatchingEngine::new();
+        // 大卖单 10.0 @ 100
+        let sell = make_limit_order(1, Side::Sell, 100.0, 10.0, 1_000);
+        engine.submit(sell);
+
+        // 小买单 3.0 @ 100，部分成交 3.0
+        let buy = make_limit_order(2, Side::Buy, 100.0, 3.0, 2_000);
+        let result = engine.submit(buy);
+        assert_eq!(result.fills.len(), 1);
+        assert!(result.is_filled);
+        assert_eq!(result.fills[0].quantity, Quantity::from_f64(3.0));
+
+        // 卖单剩余 7.0
+        assert_eq!(engine.best_ask(), Some(Price::from_f64(100.0)));
+        let (_bids, asks) = engine.depth(5);
+        assert_eq!(asks[0].quantity, Quantity::from_f64(7.0));
+    }
+
+    #[test]
+    fn test_higher_bid_matches_first() {
+        let mut engine = L1MatchingEngine::new();
+        // 卖单 1 @ 100
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+        // 卖单 1 @ 101
+        engine.submit(make_limit_order(2, Side::Sell, 101.0, 1.0, 2_000));
+
+        // 买单 1 @ 101 → 先匹配卖单 1 @ 100（更优）
+        let buy = make_limit_order(3, Side::Buy, 101.0, 1.0, 3_000);
+        let result = engine.submit(buy);
+        assert_eq!(result.fills[0].price, Price::from_f64(100.0));
+    }
+
+    #[test]
+    fn test_lower_ask_matches_first() {
+        let mut engine = L1MatchingEngine::new();
+        engine.submit(make_limit_order(1, Side::Buy, 100.0, 1.0, 1_000));
+        engine.submit(make_limit_order(2, Side::Buy, 101.0, 1.0, 2_000));
+
+        let sell = make_limit_order(3, Side::Sell, 100.0, 1.0, 3_000);
+        let result = engine.submit(sell);
+        // 卖单 100 价能匹配买单 101（更高价）
+        assert_eq!(result.fills[0].price, Price::from_f64(101.0));
+    }
+
+    #[test]
+    fn test_same_price_earlier_order_matches_first() {
+        let mut engine = L1MatchingEngine::new();
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+        engine.submit(make_limit_order(2, Side::Sell, 100.0, 1.0, 2_000));
+
+        let buy = make_limit_order(3, Side::Buy, 100.0, 1.0, 3_000);
+        let result = engine.submit(buy);
+        assert_eq!(result.fills[0].maker_order_id, 1);
+    }
+
+    #[test]
+    fn test_best_bid_after_insert() {
+        let mut engine = L1MatchingEngine::new();
+        engine.submit(make_limit_order(1, Side::Buy, 100.0, 1.0, 1_000));
+        engine.submit(make_limit_order(2, Side::Buy, 102.0, 1.0, 2_000));
+        engine.submit(make_limit_order(3, Side::Buy, 101.0, 1.0, 3_000));
+        assert_eq!(engine.best_bid(), Some(Price::from_f64(102.0)));
+    }
+
+    #[test]
+    fn test_best_ask_after_insert() {
+        let mut engine = L1MatchingEngine::new();
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+        engine.submit(make_limit_order(2, Side::Sell, 102.0, 1.0, 2_000));
+        engine.submit(make_limit_order(3, Side::Sell, 101.0, 1.0, 3_000));
+        assert_eq!(engine.best_ask(), Some(Price::from_f64(100.0)));
+    }
+
+    #[test]
+    fn test_spread_calculation() {
+        let mut engine = L1MatchingEngine::new();
+        engine.submit(make_limit_order(1, Side::Buy, 100.0, 1.0, 1_000));
+        engine.submit(make_limit_order(2, Side::Sell, 103.0, 1.0, 2_000));
+        let spread = engine.spread().unwrap();
+        assert!((spread.as_f64() - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_cancel_existing_order() {
+        let mut engine = L1MatchingEngine::new();
+        let sell = make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000);
+        engine.submit(sell);
+        assert_eq!(engine.active_order_count(), 1);
+
+        let cancelled = engine.cancel(1);
+        assert!(cancelled);
+        assert_eq!(engine.active_order_count(), 0);
+        assert!(engine.best_ask().is_none());
+    }
+
+    #[test]
+    fn test_cancel_nonexistent_order() {
+        let mut engine = L1MatchingEngine::new();
+        assert!(!engine.cancel(999));
+    }
+
+    #[test]
+    fn test_depth_query() {
+        let mut engine = L1MatchingEngine::new();
+        engine.submit(make_limit_order(1, Side::Buy, 100.0, 1.0, 1_000));
+        engine.submit(make_limit_order(2, Side::Buy, 101.0, 2.0, 2_000));
+        engine.submit(make_limit_order(3, Side::Sell, 103.0, 1.0, 3_000));
+        engine.submit(make_limit_order(4, Side::Sell, 104.0, 3.0, 4_000));
+
+        let (bids, asks) = engine.depth(5);
+        assert_eq!(bids.len(), 2);
+        assert_eq!(bids[0].price, Price::from_f64(101.0)); // 最高价优先
+        assert_eq!(asks.len(), 2);
+        assert_eq!(asks[0].price, Price::from_f64(103.0));
+    }
+
+    #[test]
+    fn test_ioc_unfilled_cancelled() {
+        let mut engine = L1MatchingEngine::new();
+        // 无对手方时 IOC 立即取消
+        let ioc_order = Order::new(
+            1,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Limit {
+                price: Price::from_f64(100.0),
+            },
+            Quantity::from_f64(1.0),
+            TimeInForce::IOC,
+        );
+        let result = engine.submit(ioc_order);
+        assert!(result.fills.is_empty());
+        assert_eq!(engine.active_order_count(), 0);
+    }
+
+    #[test]
+    fn test_fok_partial_fill_rejected() {
+        let mut engine = L1MatchingEngine::new();
+        // 卖单 1.0 @ 100
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+
+        // FOK 买单 2.0 @ 100（期望全部成交，否则取消）
+        let fok_order = Order::new(
+            2,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Limit {
+                price: Price::from_f64(100.0),
+            },
+            Quantity::from_f64(2.0),
+            TimeInForce::FOK,
+        );
+        let result = engine.submit(fok_order);
+        // FOK 无法全部成交，应整单取消
+        assert!(result.fills.is_empty());
+        // 卖单仍在
+        assert_eq!(engine.active_order_count(), 1);
+    }
+
+    #[test]
+    fn test_fok_full_fill_succeeds() {
+        let mut engine = L1MatchingEngine::new();
+        // 卖单 1.0 @ 100
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+
+        // FOK 买单 1.0 @ 100（恰好全部成交）
+        let fok_order = Order::new(
+            2,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Limit {
+                price: Price::from_f64(100.0),
+            },
+            Quantity::from_f64(1.0),
+            TimeInForce::FOK,
+        );
+        let result = engine.submit(fok_order);
+        assert_eq!(result.fills.len(), 1);
+        assert!(result.is_filled);
+    }
+
+    #[test]
+    fn test_market_order_immediate_fill() {
+        let mut engine = L1MatchingEngine::new();
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+
+        let market_order = Order::new(
+            2,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Market,
+            Quantity::from_f64(1.0),
+            TimeInForce::IOC,
+        );
+        let result = engine.submit(market_order);
+        assert_eq!(result.fills.len(), 1);
+        assert!(result.is_filled);
+    }
+
+    #[test]
+    fn test_invalid_price_rejected() {
+        let mut engine = L1MatchingEngine::new();
+        let bad_order = Order::new(
+            1,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Limit {
+                price: Price::from_f64(0.0),
+            },
+            Quantity::from_f64(1.0),
+            TimeInForce::GTC,
+        );
+        let result = engine.submit(bad_order);
+        assert!(result.fills.is_empty());
+    }
+
+    #[test]
+    fn test_engine_with_symbol() {
+        let engine = L1MatchingEngine::with_symbol(Symbol::from("ETH-USDT"));
+        assert!(engine.symbol.is_some());
+    }
+
+    #[test]
+    fn test_fill_id_monotonic() {
+        let mut engine = L1MatchingEngine::new();
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+        engine.submit(make_limit_order(2, Side::Buy, 100.0, 1.0, 2_000));
+        engine.submit(make_limit_order(3, Side::Sell, 101.0, 1.0, 3_000));
+        engine.submit(make_limit_order(4, Side::Buy, 101.0, 1.0, 4_000));
+        assert_eq!(engine.fill_count(), 2);
+    }
+
+    #[test]
+    fn test_spread_none_when_empty() {
+        let engine = L1MatchingEngine::new();
+        assert!(engine.spread().is_none());
+    }
+
+    #[test]
+    fn test_no_match_when_prices_dont_cross() {
+        let mut engine = L1MatchingEngine::new();
+        // 卖单 1 @ 100
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+        // 买单 0.5 @ 99 (限价低于卖价，无法成交)
+        let buy = make_limit_order(2, Side::Buy, 99.0, 0.5, 2_000);
+        let result = engine.submit(buy);
+        assert!(result.fills.is_empty());
+        assert!(!result.is_filled);
+        // 买单进入买单簿
+        assert_eq!(engine.best_bid(), Some(Price::from_f64(99.0)));
+    }
+}

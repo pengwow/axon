@@ -1,0 +1,248 @@
+//! 幂律冲击模型
+//!
+//! `impact = coefficient × (order_quantity / total_depth)^exponent`
+//!
+//! 实证研究表明 `exponent ≈ 0.5-0.6`（square-root law）。
+
+use serde::{Deserialize, Serialize};
+
+use super::traits::ImpactModel;
+use super::types::Impact;
+use crate::market::{OrderBookSnapshot, Side};
+use crate::types::Quantity;
+
+/// 幂律冲击模型
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PowerLawImpactModel {
+    /// 冲击系数
+    pub coefficient: f64,
+    /// 幂律指数（通常 0.5-0.6）
+    pub exponent: f64,
+    /// 使用的深度层级数
+    pub depth_levels: usize,
+    /// 即时/永久冲击比例
+    pub instantaneous_ratio: f64,
+}
+
+impl PowerLawImpactModel {
+    /// 创建新模型（默认 depth = 10，inst_ratio = 0.7）
+    pub fn new(coefficient: f64, exponent: f64) -> Self {
+        assert!(coefficient >= 0.0, "冲击系数必须非负");
+        assert!(
+            exponent > 0.0 && exponent <= 2.0,
+            "幂律指数应在 (0, 2] 范围"
+        );
+        Self {
+            coefficient,
+            exponent,
+            depth_levels: 10,
+            instantaneous_ratio: 0.7,
+        }
+    }
+
+    /// 设置深度层级
+    pub fn with_depth(mut self, levels: usize) -> Self {
+        self.depth_levels = levels;
+        self
+    }
+
+    /// 设置即时冲击比例
+    pub fn with_instantaneous_ratio(mut self, ratio: f64) -> Self {
+        assert!(
+            (0.0..=1.0).contains(&ratio),
+            "instantaneous_ratio 必须在 [0, 1] 范围"
+        );
+        self.instantaneous_ratio = ratio;
+        self
+    }
+}
+
+impl Default for PowerLawImpactModel {
+    fn default() -> Self {
+        Self::new(0.1, 0.5) // 经典 square-root law
+    }
+}
+
+impl ImpactModel for PowerLawImpactModel {
+    fn compute_impact(
+        &self,
+        order_quantity: Quantity,
+        side: Side,
+        order_book: &OrderBookSnapshot,
+    ) -> Impact {
+        if order_book.asks.is_empty() && order_book.bids.is_empty() {
+            return Impact::zero();
+        }
+
+        let total_depth: f64 = match side {
+            Side::Buy => order_book
+                .asks
+                .iter()
+                .take(self.depth_levels)
+                .map(|l| l.quantity.as_f64())
+                .sum(),
+            Side::Sell => order_book
+                .bids
+                .iter()
+                .take(self.depth_levels)
+                .map(|l| l.quantity.as_f64())
+                .sum(),
+        };
+
+        if total_depth <= 0.0 {
+            return Impact::zero();
+        }
+
+        let ratio = order_quantity.as_f64() / total_depth;
+        let impact_magnitude = self.coefficient * ratio.powf(self.exponent);
+        let instantaneous = impact_magnitude * self.instantaneous_ratio;
+        let permanent = impact_magnitude * (1.0 - self.instantaneous_ratio);
+
+        Impact {
+            instantaneous,
+            permanent,
+        }
+    }
+
+    fn name(&self) -> &str {
+        "PowerLawImpact"
+    }
+
+    fn params(&self) -> String {
+        format!(
+            "coefficient={}, exponent={}, depth={}, inst_ratio={}",
+            self.coefficient, self.exponent, self.depth_levels, self.instantaneous_ratio
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::market::{OrderBookLevel, OrderBookSnapshot};
+    use crate::time::Timestamp;
+    use crate::types::Price;
+
+    fn sample_ob() -> OrderBookSnapshot {
+        OrderBookSnapshot {
+            timestamp: Timestamp::from_nanos(0),
+            bids: vec![OrderBookLevel {
+                price: Price::from_f64(99.0),
+                quantity: Quantity::from_f64(100.0),
+            }],
+            asks: vec![OrderBookLevel {
+                price: Price::from_f64(100.0),
+                quantity: Quantity::from_f64(100.0),
+            }],
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "冲击系数必须非负")]
+    fn test_new_rejects_negative_coefficient() {
+        PowerLawImpactModel::new(-0.1, 0.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "幂律指数应在 (0, 2] 范围")]
+    fn test_new_rejects_zero_exponent() {
+        PowerLawImpactModel::new(0.1, 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "幂律指数应在 (0, 2] 范围")]
+    fn test_new_rejects_too_large_exponent() {
+        PowerLawImpactModel::new(0.1, 2.5);
+    }
+
+    #[test]
+    fn test_default_uses_sqrt_law() {
+        let m = PowerLawImpactModel::default();
+        assert_eq!(m.coefficient, 0.1);
+        assert!((m.exponent - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_with_depth() {
+        let m = PowerLawImpactModel::new(0.1, 0.5).with_depth(20);
+        assert_eq!(m.depth_levels, 20);
+    }
+
+    #[test]
+    fn test_compute_impact_sqrt_law() {
+        let m = PowerLawImpactModel::new(0.1, 0.5);
+        let ob = OrderBookSnapshot {
+            timestamp: Timestamp::from_nanos(0),
+            bids: vec![],
+            asks: vec![OrderBookLevel {
+                price: Price::from_f64(100.0),
+                quantity: Quantity::from_f64(1000.0),
+            }],
+        };
+        let impact = m.compute_impact(Quantity::from_f64(100.0), Side::Buy, &ob);
+        // 0.1 × (100/1000)^0.5 = 0.1 × 0.3162...
+        let expected = 0.1 * (100.0_f64 / 1000.0).sqrt();
+        assert!((impact.total() - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_impact_sublinear() {
+        // exponent < 1 ⇒ 亚线性（订单量翻倍，冲击小于翻倍）
+        let m = PowerLawImpactModel::new(0.1, 0.5);
+        let ob = sample_ob();
+        let i1 = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &ob);
+        let i2 = m.compute_impact(Quantity::from_f64(20.0), Side::Buy, &ob);
+        // sqrt(2) ≈ 1.414
+        assert!(i2.total() / i1.total() < 2.0);
+        assert!(i2.total() / i1.total() > 1.4);
+    }
+
+    #[test]
+    fn test_compute_impact_exponent_one_equals_linear() {
+        // exponent = 1 ⇒ 等价于线性模型
+        let m = PowerLawImpactModel::new(0.05, 1.0);
+        let ob = sample_ob();
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &ob);
+        // 0.05 × (10 / 100)^1 = 0.005
+        assert!((impact.total() - 0.005).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compute_impact_empty_orderbook() {
+        let m = PowerLawImpactModel::default();
+        let ob = OrderBookSnapshot::empty(Timestamp::from_nanos(0));
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &ob);
+        assert_eq!(impact, Impact::zero());
+    }
+
+    #[test]
+    fn test_compute_impact_zero_depth() {
+        let m = PowerLawImpactModel::default();
+        let ob = OrderBookSnapshot {
+            timestamp: Timestamp::from_nanos(0),
+            bids: vec![],
+            asks: vec![OrderBookLevel {
+                price: Price::from_f64(100.0),
+                quantity: Quantity::from_f64(0.0),
+            }],
+        };
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &ob);
+        assert_eq!(impact, Impact::zero());
+    }
+
+    #[test]
+    fn test_compute_impact_very_large_quantity() {
+        let m = PowerLawImpactModel::new(0.1, 0.5);
+        let impact = m.compute_impact(Quantity::from_f64(10_000.0), Side::Buy, &sample_ob());
+        // 0.1 × (10_000 / 100)^0.5 = 0.1 × 10 = 1.0
+        assert!((impact.total() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_name_and_params() {
+        let m = PowerLawImpactModel::new(0.1, 0.5);
+        assert_eq!(m.name(), "PowerLawImpact");
+        let p = m.params();
+        assert!(p.contains("exponent=0.5"));
+    }
+}

@@ -1,0 +1,26 @@
+[package]
+name = "axon-backtest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON 回测引擎：事件队列、撮合、延迟、费用模型（Phase 1A 阶段填充）"
+
+[features]
+default = []
+# L2 复杂订单簿（Phase 1A 后启用）
+l2 = []
+# L3 多资产交叉（Phase 1A 后启用）
+l3 = []
+
+[dependencies]
+axon-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
