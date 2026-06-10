@@ -167,10 +167,7 @@ mod tests {
 
     #[test]
     fn test_queue_base_delay_under_light_load() {
-        let model = QueueLatencyModel::new(
-            Duration::from_millis(10),
-            Duration::from_millis(1),
-        );
+        let model = QueueLatencyModel::new(Duration::from_millis(10), Duration::from_millis(1));
         // 轻负载时 OrderSubmit ≈ base_delay
         assert_eq!(
             model.sample_delay(PathType::OrderSubmit),
@@ -190,10 +187,7 @@ mod tests {
 
     #[test]
     fn test_queue_delay_increases_with_length() {
-        let model = QueueLatencyModel::new(
-            Duration::from_millis(10),
-            Duration::from_millis(1),
-        );
+        let model = QueueLatencyModel::new(Duration::from_millis(10), Duration::from_millis(1));
         let d0 = model.sample_delay(PathType::OrderSubmit);
         model.enqueue();
         let d1 = model.sample_delay(PathType::OrderSubmit);
@@ -206,10 +200,7 @@ mod tests {
 
     #[test]
     fn test_queue_enqueue_dequeue() {
-        let model = QueueLatencyModel::new(
-            Duration::from_millis(0),
-            Duration::from_millis(1),
-        );
+        let model = QueueLatencyModel::new(Duration::from_millis(0), Duration::from_millis(1));
         assert_eq!(model.queue_length(), 0);
         model.enqueue();
         model.enqueue();
@@ -223,11 +214,8 @@ mod tests {
 
     #[test]
     fn test_queue_max_length_cap() {
-        let model = QueueLatencyModel::new(
-            Duration::from_millis(0),
-            Duration::from_millis(1),
-        )
-        .with_max_queue_length(3);
+        let model = QueueLatencyModel::new(Duration::from_millis(0), Duration::from_millis(1))
+            .with_max_queue_length(3);
         for _ in 0..10 {
             model.enqueue();
         }
@@ -236,21 +224,15 @@ mod tests {
 
     #[test]
     fn test_queue_set_length() {
-        let model = QueueLatencyModel::new(
-            Duration::from_millis(0),
-            Duration::from_millis(1),
-        );
+        let model = QueueLatencyModel::new(Duration::from_millis(0), Duration::from_millis(1));
         model.set_queue_length(100);
         assert_eq!(model.queue_length(), 100);
     }
 
     #[test]
     fn test_queue_set_length_respects_max() {
-        let model = QueueLatencyModel::new(
-            Duration::from_millis(0),
-            Duration::from_millis(1),
-        )
-        .with_max_queue_length(50);
+        let model = QueueLatencyModel::new(Duration::from_millis(0), Duration::from_millis(1))
+            .with_max_queue_length(50);
         model.set_queue_length(999);
         assert_eq!(model.queue_length(), 50);
     }
@@ -263,15 +245,130 @@ mod tests {
 
     #[test]
     fn test_name_and_params() {
-        let model = QueueLatencyModel::new(
-            Duration::from_millis(10),
-            Duration::from_millis(1),
-        );
+        let model = QueueLatencyModel::new(Duration::from_millis(10), Duration::from_millis(1));
         model.set_queue_length(5);
         assert_eq!(model.name(), "queue");
         let p = model.params();
         assert_eq!(p.model_type, "queue");
         assert!((p.base_delay_ms - 10.0).abs() < 1e-9);
         assert!((p.jitter_ms.expect("jitter") - 5.0).abs() < 1e-9);
+    }
+
+    // ─── 边界测试 ──────────────────────────────────────────
+
+    /// 零基础延迟 + 零处理时间 ⇒ 仅由队列长度贡献
+    #[test]
+    fn test_zero_base_zero_processing() {
+        let model = QueueLatencyModel::new(Duration::ZERO, Duration::ZERO);
+        assert_eq!(model.sample_delay(PathType::OrderSubmit), Duration::ZERO);
+        model.enqueue();
+        model.enqueue();
+        model.enqueue();
+        // queue=3, processing=0 ⇒ 0
+        assert_eq!(model.sample_delay(PathType::OrderSubmit), Duration::ZERO);
+    }
+
+    /// 极大队列长度（接近 max）
+    #[test]
+    fn test_extreme_queue_length() {
+        let model = QueueLatencyModel::new(Duration::from_millis(1), Duration::from_millis(1))
+            .with_max_queue_length(usize::MAX);
+        // 1000 万次 enqueue
+        for _ in 0..10_000_000 {
+            model.enqueue();
+        }
+        // 不应 panic，且行为可预测：被 max_queue_length 截断到 usize::MAX
+        // usize 必然 <= usize::MAX ⇒ 验证 enqueue 在极端容量下不会溢出
+        let _ = model.queue_length();
+    }
+
+    /// set_queue_length 超过 max ⇒ 截断到 max
+    #[test]
+    fn test_set_queue_length_too_large() {
+        let model = QueueLatencyModel::new(Duration::from_millis(1), Duration::from_millis(1))
+            .with_max_queue_length(100);
+        model.set_queue_length(usize::MAX);
+        assert_eq!(model.queue_length(), 100);
+    }
+
+    /// 满队列时再 dequeue 多次不会下溢
+    #[test]
+    fn test_dequeue_below_zero_safe() {
+        let model = QueueLatencyModel::new(Duration::from_millis(1), Duration::from_millis(1));
+        // 初始 0
+        for _ in 0..1000 {
+            model.dequeue();
+        }
+        assert_eq!(model.queue_length(), 0);
+    }
+
+    /// 序列化往返
+    #[test]
+    fn test_queue_serde_roundtrip() {
+        let model = QueueLatencyModel::new(Duration::from_millis(10), Duration::from_millis(1));
+        model.set_queue_length(5);
+        let json = serde_json::to_string(&model).unwrap();
+        let de: QueueLatencyModel = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.queue_length(), 5);
+        // sample_delay 应保持一致
+        assert_eq!(
+            de.sample_delay(PathType::OrderSubmit),
+            Duration::from_millis(15)
+        );
+    }
+
+    /// 反序列化时 queue_length 超过 max ⇒ 截断
+    #[test]
+    fn test_deserialize_truncates_excessive_queue_length() {
+        // 序列化一个 5/10 的 model
+        let original = QueueLatencyModel::new(Duration::from_millis(10), Duration::from_millis(1))
+            .with_max_queue_length(50);
+        original.set_queue_length(5);
+        let json = serde_json::to_string(&original).unwrap();
+        // 篡改 json 让 queue_length 超过 max
+        let json_padded = json.replace("\"queue_length\":5", "\"queue_length\":99999");
+        let de: QueueLatencyModel = serde_json::from_str(&json_padded).unwrap();
+        assert_eq!(de.queue_length(), 50);
+    }
+
+    /// 路径权重：MarketData/AccountQuery/Heartbeat 使用 factor=1
+    #[test]
+    fn test_path_factor_default_paths() {
+        let model = QueueLatencyModel::new(Duration::from_millis(40), Duration::from_millis(1));
+        // factor = 1 ⇒ base_delay / 4 = 10ms
+        assert_eq!(
+            model.sample_delay(PathType::MarketData),
+            Duration::from_millis(10)
+        );
+        assert_eq!(
+            model.sample_delay(PathType::AccountQuery),
+            Duration::from_millis(10)
+        );
+        assert_eq!(
+            model.sample_delay(PathType::Heartbeat),
+            Duration::from_millis(10)
+        );
+    }
+
+    /// 极小 processing_time
+    #[test]
+    fn test_epsilon_processing_time() {
+        let model = QueueLatencyModel::new(Duration::from_millis(0), Duration::from_nanos(1));
+        model.set_queue_length(10);
+        // queue=10, processing=1ns ⇒ 10ns
+        let d = model.sample_delay(PathType::OrderSubmit);
+        assert_eq!(d, Duration::from_nanos(10));
+    }
+
+    /// Clone 复制状态
+    #[test]
+    fn test_clone_preserves_state() {
+        let original = QueueLatencyModel::new(Duration::from_millis(10), Duration::from_millis(1));
+        original.set_queue_length(7);
+        let cloned = original.clone();
+        // 独立状态
+        cloned.dequeue();
+        assert_eq!(original.queue_length(), 7);
+        assert_eq!(cloned.queue_length(), 6);
     }
 }

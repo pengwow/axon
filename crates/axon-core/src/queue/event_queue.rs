@@ -296,8 +296,8 @@ impl EventQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::system::SystemAction;
     use crate::event::EventBuilder;
+    use crate::event::system::SystemAction;
     use crate::time::Timestamp;
 
     fn make_event(b: &mut EventBuilder, ts_nanos: i64) -> Event {
@@ -554,5 +554,160 @@ mod tests {
         assert_eq!(q.current_time(), Timestamp::from_nanos(0));
         // 剩余 300, 400
         assert_eq!(q.len(), 2);
+    }
+
+    // ─── 补充边界场景 ─────────────────────────────────
+
+    /// 空队列 pop/peek 返回 None
+    #[test]
+    fn test_empty_queue_pop_peek() {
+        let mut q = EventQueue::new();
+        assert!(q.next().is_none(), "空队列 pop 返回 None");
+        assert!(q.peek().is_none(), "空队列 peek 返回 None");
+        assert_eq!(q.peek_time(), None, "空队列 peek_time 返回 None");
+        assert!(q.is_empty());
+        assert_eq!(q.len(), 0);
+    }
+
+    /// 极小时间戳（Unix 纪元）
+    #[test]
+    fn test_unix_epoch_timestamp() {
+        let mut q = EventQueue::new();
+        let mut b = EventBuilder::new(0);
+        let event = make_event(&mut b, 0);
+        q.push(event);
+        let popped = q.next().expect("应能弹出");
+        assert_eq!(popped.timestamp(), Timestamp::from_nanos(0));
+    }
+
+    /// i64::MAX 时间戳
+    #[test]
+    fn test_max_timestamp_event() {
+        let mut q = EventQueue::new();
+        let mut b = EventBuilder::new(0);
+        let event = make_event(&mut b, i64::MAX);
+        q.push(event);
+        let popped = q.next().expect("应能弹出");
+        assert_eq!(popped.timestamp(), Timestamp::from_nanos(i64::MAX));
+    }
+
+    /// 同一时间戳不同 seq 应按 seq 升序弹出（FIFO）
+    #[test]
+    fn test_same_timestamp_seq_ordering() {
+        let mut q = EventQueue::new();
+        let mut b = EventBuilder::new(0);
+        // 同一时间戳 t=1000, seq 3 个事件
+        let e1 = make_event(&mut b, 1000); // seq=0
+        let e2 = make_event(&mut b, 1000); // seq=1
+        let e3 = make_event(&mut b, 1000); // seq=2
+        q.push(e1);
+        q.push(e2);
+        q.push(e3);
+
+        let p1 = q.next().unwrap();
+        let p2 = q.next().unwrap();
+        let p3 = q.next().unwrap();
+        // seq 顺序：0 < 1 < 2
+        assert!(p1.seq() < p2.seq());
+        assert!(p2.seq() < p3.seq());
+    }
+
+    /// 时间戳乱序入队：弹出顺序仍按时间戳排序
+    #[test]
+    fn test_out_of_order_push_orders_by_time() {
+        let mut q = EventQueue::new();
+        let mut b = EventBuilder::new(0);
+        // 乱序 push
+        q.push(make_event(&mut b, 300));
+        q.push(make_event(&mut b, 100));
+        q.push(make_event(&mut b, 200));
+
+        // 弹出顺序应为 100, 200, 300
+        assert_eq!(q.next().unwrap().timestamp(), Timestamp::from_nanos(100));
+        assert_eq!(q.next().unwrap().timestamp(), Timestamp::from_nanos(200));
+        assert_eq!(q.next().unwrap().timestamp(), Timestamp::from_nanos(300));
+        assert!(q.is_empty());
+    }
+
+    /// 大量事件（10K）批量入队与弹出
+    #[test]
+    fn test_large_batch_push_pop() {
+        let mut q = EventQueue::new();
+        let mut b = EventBuilder::new(0);
+        // 乱序 push 10K 事件
+        for i in (0..10_000).rev() {
+            q.push(make_event(&mut b, i as i64));
+        }
+        assert_eq!(q.len(), 10_000);
+
+        // 弹出顺序应严格递增
+        let mut prev = -1_i64;
+        for _ in 0..10_000 {
+            let evt = q.next().expect("应有事件");
+            let ts = evt.timestamp().nanos;
+            assert!(ts > prev, "时间戳非递增: {prev} -> {ts}");
+            prev = ts;
+        }
+        assert!(q.is_empty());
+    }
+
+    /// drain_until 处理全部事件（无上限）
+    #[test]
+    fn test_drain_until_all() {
+        let mut q = EventQueue::new();
+        let mut b = EventBuilder::new(0);
+        for i in 0..5 {
+            q.push(make_event(&mut b, i * 100));
+        }
+        let drained = q.drain_until(Timestamp::from_nanos(i64::MAX));
+        assert_eq!(drained.len(), 5);
+        assert!(q.is_empty());
+    }
+
+    /// fast_forward_to 跳到中间时间
+    #[test]
+    fn test_fast_forward_to_middle() {
+        let mut q = EventQueue::new();
+        let mut b = EventBuilder::new(0);
+        for i in 0..10 {
+            q.push(make_event(&mut b, i * 100));
+        }
+        q.fast_forward_to(Timestamp::from_nanos(350));
+        // current_time 应为 350
+        assert_eq!(q.current_time(), Timestamp::from_nanos(350));
+        // 剩余 [400, 500, ..., 900]
+        assert_eq!(q.len(), 6);
+    }
+
+    /// reset 后队列为空但 replay 可恢复（如果启用日志）
+    #[test]
+    fn test_reset_clears_completely() {
+        let mut q = EventQueue::with_replay_log();
+        let mut b = EventBuilder::new(0);
+        for i in 0..3 {
+            q.push(make_event(&mut b, i * 100));
+        }
+        assert_eq!(q.len(), 3);
+        q.reset();
+        assert_eq!(q.len(), 0);
+        assert!(q.is_empty());
+        // replay log 仍在（可恢复）
+        assert!(!q.replay_log().is_empty());
+    }
+
+    /// fast_forward_collect 返回跳过的所有事件
+    #[test]
+    fn test_fast_forward_collect_returns_skipped() {
+        let mut q = EventQueue::new();
+        let mut b = EventBuilder::new(0);
+        for i in 0..5 {
+            q.push(make_event(&mut b, i * 100));
+        }
+        // 事件时间戳：[0, 100, 200, 300, 400]
+        // target=300，<= 300 的事件全部收集
+        let collected = q.fast_forward_collect(Timestamp::from_nanos(300));
+        assert_eq!(collected.len(), 4); // [0, 100, 200, 300]
+        assert_eq!(q.len(), 1); // [400] 剩余
+        assert_eq!(q.current_time(), Timestamp::from_nanos(300));
     }
 }

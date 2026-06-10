@@ -31,6 +31,7 @@
 
 pub mod error;
 pub mod event;
+pub mod fee;
 pub mod impact;
 pub mod latency;
 pub mod market;
@@ -85,8 +86,9 @@ pub use scheduler::{
 
 // 冲击模型 re-export
 pub use impact::{
-    create_model, linear_impact, sqrt_impact, AdaptiveImpactModel, Impact, ImpactModel,
-    ImpactModelConfig, ImpactModelError, ImpactModelResult, LinearImpactModel, PowerLawImpactModel,
+    AdaptiveImpactModel, Impact, ImpactModel, ImpactModelConfig, ImpactModelError,
+    ImpactModelResult, LinearImpactModel, PowerLawImpactModel, create_model, linear_impact,
+    sqrt_impact,
 };
 
 // 延迟模型 re-export
@@ -94,4 +96,10 @@ pub use latency::{
     CompositeLatencyModel, ConstantLatencyModel, ExponentialLatencyModel, LatencyModel,
     LatencyModelError, LatencyModelFactory, LatencyModelResult, LatencyParams, NormalLatencyModel,
     PathType, QueueLatencyModel, UniformLatencyModel,
+};
+
+// 费用模型 re-export
+pub use fee::{
+    ExchangeId, FeeBreakdown, FeeModel, FeeModelError, FeeModelResult, FeePosition, FeeRecord,
+    FeeTable, FeeTrade, FeeType, TieredFeeModel, TradeRole, VolumeTier,
 };

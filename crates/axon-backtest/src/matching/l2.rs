@@ -158,16 +158,16 @@ impl L2MatchingEngine {
         // 由于 L1 不暴露订单列表，修改通过：取消旧单 + 用新订单替代
         // 该方案保留了 L1 内部状态一致性
         // 1. 验证新价格
-        if let Some(p) = new_price {
-            if p.as_f64() <= 0.0 {
-                return Err(super::error::MatchingError::InvalidPrice { price: p });
-            }
+        if let Some(p) = new_price
+            && p.as_f64() <= 0.0
+        {
+            return Err(super::error::MatchingError::InvalidPrice { price: p });
         }
         // 2. 验证新数量
-        if let Some(q) = new_quantity {
-            if q.as_f64() <= 0.0 {
-                return Err(super::error::MatchingError::InvalidQuantity { quantity: q });
-            }
+        if let Some(q) = new_quantity
+            && q.as_f64() <= 0.0
+        {
+            return Err(super::error::MatchingError::InvalidQuantity { quantity: q });
         }
         // 3. 取消旧单
         self.inner.cancel(order_id);

@@ -225,10 +225,10 @@ impl Scheduler {
                 break;
             }
             // 检查任务触发时间是否已超出时钟边界
-            if let Some(end) = self.clock.end() {
-                if next_time > end {
-                    break;
-                }
+            if let Some(end) = self.clock.end()
+                && next_time > end
+            {
+                break;
             }
 
             // 推进时钟
@@ -349,8 +349,8 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
     fn test_new_scheduler() {

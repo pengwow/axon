@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "crates/axon-core",
     "crates/axon-backtest",
+    "crates/axon-rl",
     "crates/axon-cli",
 ]
 
@@ -25,6 +26,7 @@ authors = ["AXON Team <team@axon.dev>"]
 # 内部 crate
 axon-core = { path = "crates/axon-core" }
 axon-backtest = { path = "crates/axon-backtest" }
+axon-rl = { path = "crates/axon-rl" }
 
 # 错误处理
 thiserror = "1.0"

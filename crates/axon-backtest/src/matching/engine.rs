@@ -126,22 +126,22 @@ impl L1MatchingEngine {
     /// 验证订单基础参数
     fn validate(&self, order: &Order) -> MatchingResult<()> {
         // 限价单价格必须 > 0
-        if let Some(p) = Self::limit_price(order) {
-            if p.as_f64() <= 0.0 {
-                return Err(MatchingError::InvalidPrice { price: p });
-            }
+        if let Some(p) = Self::limit_price(order)
+            && p.as_f64() <= 0.0
+        {
+            return Err(MatchingError::InvalidPrice { price: p });
         }
         if order.quantity.as_f64() <= 0.0 {
             return Err(MatchingError::InvalidQuantity {
                 quantity: order.quantity,
             });
         }
-        if let Some(ref expected) = self.symbol {
-            if &order.symbol != expected {
-                return Err(MatchingError::InvalidModification {
-                    reason: format!("符号不匹配: 引擎绑定 {}，订单 {}", expected, order.symbol),
-                });
-            }
+        if let Some(ref expected) = self.symbol
+            && &order.symbol != expected
+        {
+            return Err(MatchingError::InvalidModification {
+                reason: format!("符号不匹配: 引擎绑定 {}，订单 {}", expected, order.symbol),
+            });
         }
         // L1 不支持止损/冰山
         match order.order_type {
@@ -161,10 +161,10 @@ impl L1MatchingEngine {
                 // 买单：按卖价升序累加可成交量
                 let mut available = 0.0;
                 for (_, orders) in self.asks.iter() {
-                    if let Some(taker_price) = Self::limit_price(taker) {
-                        if taker_price.as_f64() < orders_price(orders) {
-                            break;
-                        }
+                    if let Some(taker_price) = Self::limit_price(taker)
+                        && taker_price.as_f64() < orders_price(orders)
+                    {
+                        break;
                     }
                     for maker in orders.iter() {
                         if !maker.status.is_terminal() {
@@ -181,10 +181,10 @@ impl L1MatchingEngine {
                 // 卖单：按买价降序累加可成交量
                 let mut available = 0.0;
                 for (_, orders) in self.bids.iter().rev() {
-                    if let Some(taker_price) = Self::limit_price(taker) {
-                        if taker_price.as_f64() > orders_price(orders) {
-                            break;
-                        }
+                    if let Some(taker_price) = Self::limit_price(taker)
+                        && taker_price.as_f64() > orders_price(orders)
+                    {
+                        break;
                     }
                     for maker in orders.iter() {
                         if !maker.status.is_terminal() {
@@ -207,10 +207,10 @@ impl L1MatchingEngine {
 
         for (price, orders) in self.asks.iter_mut() {
             // 限价单：买价 < 卖价时停止
-            if let Some(taker_price) = Self::limit_price(taker) {
-                if taker_price.as_f64() < price.as_f64() {
-                    break;
-                }
+            if let Some(taker_price) = Self::limit_price(taker)
+                && taker_price.as_f64() < price.as_f64()
+            {
+                break;
             }
 
             loop {
@@ -288,10 +288,10 @@ impl L1MatchingEngine {
                     continue;
                 };
                 // 限价单：卖价 > 买价时停止
-                if let Some(taker_price) = Self::limit_price(taker) {
-                    if taker_price.as_f64() > price.as_f64() {
-                        break;
-                    }
+                if let Some(taker_price) = Self::limit_price(taker)
+                    && taker_price.as_f64() > price.as_f64()
+                {
+                    break;
                 }
 
                 loop {
@@ -842,5 +842,134 @@ mod tests {
         assert!(!result.is_filled);
         // 买单进入买单簿
         assert_eq!(engine.best_bid(), Some(Price::from_f64(99.0)));
+    }
+
+    // ─── 补充边界场景 ─────────────────────────────────
+
+    /// 空订单簿查询
+    #[test]
+    fn test_empty_book_queries() {
+        let engine = L1MatchingEngine::new();
+        assert_eq!(engine.best_bid(), None, "空簿无买价");
+        assert_eq!(engine.best_ask(), None, "空簿无卖价");
+        assert_eq!(engine.spread(), None, "空簿无价差");
+        assert_eq!(engine.active_order_count(), 0);
+        let (bids, asks) = engine.depth(10);
+        assert!(bids.is_empty());
+        assert!(asks.is_empty());
+    }
+
+    /// 取消不存在的订单应返回 false（边界测试）
+    #[test]
+    fn test_boundary_cancel_nonexistent_order() {
+        let mut engine = L1MatchingEngine::new();
+        assert!(!engine.cancel(999), "取消不存在订单返回 false");
+    }
+
+    /// 市价单在空簿下应产生空成交
+    #[test]
+    fn test_market_order_on_empty_book() {
+        let mut engine = L1MatchingEngine::new();
+        let order = Order::new(
+            1,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Market,
+            Quantity::from_f64(10.0),
+            TimeInForce::IOC,
+        );
+        let result = engine.submit(order);
+        assert!(result.fills.is_empty(), "空簿市价单无成交");
+        assert!(!result.is_filled);
+        assert_eq!(result.remaining_quantity.as_f64(), 10.0);
+    }
+
+    /// 极小数量订单（0.001）应被接受
+    #[test]
+    fn test_min_positive_quantity_order() {
+        let mut engine = L1MatchingEngine::new();
+        let sell = make_limit_order(1, Side::Sell, 100.0, 0.001, 1_000);
+        let result = engine.submit(sell);
+        assert!(result.fills.is_empty());
+        // 订单入簿
+        assert_eq!(engine.best_ask(), Some(Price::from_f64(100.0)));
+    }
+
+    /// 深度查询 0 层应返回空
+    #[test]
+    fn test_depth_zero_levels() {
+        let mut engine = L1MatchingEngine::new();
+        engine.submit(make_limit_order(1, Side::Buy, 99.0, 1.0, 1_000));
+        engine.submit(make_limit_order(2, Side::Sell, 101.0, 1.0, 1_000));
+        let (bids, asks) = engine.depth(0);
+        assert!(bids.is_empty());
+        assert!(asks.is_empty());
+    }
+
+    /// 同价位多订单按 FIFO 排序
+    #[test]
+    fn test_same_price_fifo() {
+        let mut engine = L1MatchingEngine::new();
+        // 3 笔卖单同价位（FIFO 顺序：1, 2, 3）
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+        engine.submit(make_limit_order(2, Side::Sell, 100.0, 1.0, 1_500));
+        engine.submit(make_limit_order(3, Side::Sell, 100.0, 1.0, 2_000));
+        // 买单 2.5 应优先成交 FIFO 顺序的订单
+        let buy = make_limit_order(4, Side::Buy, 100.0, 2.5, 3_000);
+        let result = engine.submit(buy);
+        // 每笔 maker 都对应一个 fill（可能部分成交）
+        // 订单 1（1.0） + 订单 2（1.0） + 订单 3（0.5）= 2.5（完全成交）
+        assert_eq!(result.fills.len(), 3);
+        // 总成交量 = 2.5
+        let total_qty: f64 = result.fills.iter().map(|f| f.quantity.as_f64()).sum();
+        assert!((total_qty - 2.5).abs() < f64::EPSILON);
+        // 全部成交（剩余 0）
+        assert!(result.is_filled);
+        assert!(!result.is_partially_filled);
+        // 订单 3 剩余 0.5 挂在卖单簿
+        assert_eq!(engine.best_ask(), Some(Price::from_f64(100.0)));
+    }
+
+    /// 大量订单（10K）插入 / 取消性能与一致性
+    #[test]
+    fn test_large_order_volume() {
+        let mut engine = L1MatchingEngine::new();
+        // 插入 10K 买单（不同价位）
+        for i in 0..10_000 {
+            let price = 100.0 - (i as f64) * 0.01;
+            engine.submit(make_limit_order(i, Side::Buy, price, 1.0, i as i64));
+        }
+        assert_eq!(engine.active_order_count(), 10_000);
+        assert_eq!(engine.best_bid(), Some(Price::from_f64(100.0)));
+
+        // 全部取消
+        for i in 0..10_000 {
+            assert!(engine.cancel(i), "订单 {i} 取消失败");
+        }
+        assert_eq!(engine.active_order_count(), 0);
+        assert_eq!(engine.best_bid(), None);
+    }
+
+    /// 跨价位 match：买单价格高于最低卖价，以卖一价（maker price）成交
+    #[test]
+    fn test_buy_above_best_ask_fills_at_ask() {
+        let mut engine = L1MatchingEngine::new();
+        // 卖单 @ 100
+        engine.submit(make_limit_order(1, Side::Sell, 100.0, 1.0, 1_000));
+        // 卖单 @ 101
+        engine.submit(make_limit_order(2, Side::Sell, 101.0, 1.0, 1_500));
+        // 买单 @ 105 数量 1.0，正好吃 @ 100（最低卖价）
+        let buy = make_limit_order(3, Side::Buy, 105.0, 1.0, 2_000);
+        let result = engine.submit(buy);
+        // 应以卖一价（100）成交（maker price）
+        assert_eq!(result.fills.len(), 1);
+        assert_eq!(result.fills[0].price, Price::from_f64(100.0));
+        assert!(result.is_filled, "全部成交");
+        // 验证 best_ask 在 best_bid 之上（卖单簿仍存在）
+        let ask = engine.best_ask().expect("卖单簿非空");
+        assert!(
+            ask.as_f64() >= 100.0,
+            "best_ask 应 ≥ 100（最低卖价），实际: {ask}"
+        );
     }
 }

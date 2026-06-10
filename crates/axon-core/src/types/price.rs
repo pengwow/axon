@@ -185,4 +185,81 @@ mod tests {
         let p = Price::from_f64(123.456);
         assert_eq!(format!("{p}"), "123.456");
     }
+
+    // ─── 边界场景 ──────────────────────────────────────
+
+    /// NaN 输入应归零（构造时过滤）
+    #[test]
+    fn test_price_nan_clamped_to_zero() {
+        let p = Price::from_f64(f64::NAN);
+        assert!(p.as_f64().is_finite(), "NaN 透传为非有限值");
+        assert_eq!(p.as_f64(), 0.0, "NaN 应归零");
+        assert!(p.is_zero());
+    }
+
+    /// +∞ / -∞ 输入应归零
+    #[test]
+    fn test_price_infinity_clamped_to_zero() {
+        assert_eq!(Price::from_f64(f64::INFINITY).as_f64(), 0.0);
+        assert_eq!(Price::from_f64(f64::NEG_INFINITY).as_f64(), 0.0);
+    }
+
+    /// 极小正数（f64::MIN_POSITIVE）应保留
+    #[test]
+    fn test_price_min_positive_preserved() {
+        let p = Price::from_f64(f64::MIN_POSITIVE);
+        assert!(p.as_f64() > 0.0, "极小正数应保留非零值");
+        assert!(!p.is_zero());
+    }
+
+    /// 极大正数（f64::MAX）应保留
+    #[test]
+    fn test_price_max_value_preserved() {
+        let p = Price::from_f64(f64::MAX);
+        assert_eq!(p.as_f64(), f64::MAX);
+    }
+
+    /// 极小负数（-f64::MIN_POSITIVE）应归零
+    #[test]
+    fn test_price_small_negative_clamped_to_zero() {
+        let p = Price::from_f64(-f64::MIN_POSITIVE);
+        assert_eq!(p.as_f64(), 0.0, "负数一律归零");
+    }
+
+    /// 零价格应保留为 0
+    #[test]
+    fn test_price_zero_preserved() {
+        let p = Price::from_f64(0.0);
+        assert_eq!(p.as_f64(), 0.0);
+        assert!(p.is_zero());
+    }
+
+    /// Hash 一致性：相同价格哈希相同
+    #[test]
+    fn test_price_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let a = Price::from_f64(100.5);
+        let b = Price::from_f64(100.5);
+        let mut ha = DefaultHasher::new();
+        let mut hb = DefaultHasher::new();
+        a.hash(&mut ha);
+        b.hash(&mut hb);
+        assert_eq!(ha.finish(), hb.finish(), "相同价格哈希必须一致");
+    }
+
+    /// 边界价格作为 BTreeMap 键可用（依赖 Ord 实现）
+    #[test]
+    fn test_price_btreemap_key_zero_vs_positive() {
+        use std::collections::BTreeMap;
+        let mut map: BTreeMap<Price, &'static str> = BTreeMap::new();
+        map.insert(Price::from_f64(0.0), "zero");
+        map.insert(Price::from_f64(f64::MIN_POSITIVE), "min_positive");
+        map.insert(Price::from_f64(f64::MAX), "max");
+
+        assert_eq!(map.len(), 3);
+        let keys: Vec<_> = map.keys().map(|p| p.as_f64()).collect();
+        assert_eq!(keys, vec![0.0, f64::MIN_POSITIVE, f64::MAX]);
+    }
 }

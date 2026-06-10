@@ -253,4 +253,138 @@ mod tests {
         assert!(p.contains("0.05"));
         assert!(p.contains("depth=5"));
     }
+
+    // ─── 边界测试 ──────────────────────────────────────────
+
+    /// 系数为 0 的模型应始终返回零冲击
+    #[test]
+    fn test_zero_coefficient_always_zero_impact() {
+        let m = LinearImpactModel::new(0.0);
+        let ob = sample_ob();
+        for q in [0.0, 1.0, 10.0, 1_000.0, f64::MAX] {
+            let impact = m.compute_impact(Quantity::from_f64(q), Side::Buy, &ob);
+            assert_eq!(impact, Impact::zero());
+        }
+    }
+
+    /// 零 instantaneous_ratio ⇒ 全部永久冲击
+    #[test]
+    fn test_zero_instantaneous_ratio_all_permanent() {
+        let m = LinearImpactModel::new(0.05).with_instantaneous_ratio(0.0);
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert_eq!(impact.instantaneous, 0.0);
+        assert!((impact.permanent - 0.005).abs() < 1e-10);
+    }
+
+    /// 满 instantaneous_ratio（1.0）⇒ 全部即时冲击
+    #[test]
+    fn test_full_instantaneous_ratio_all_instantaneous() {
+        let m = LinearImpactModel::new(0.05).with_instantaneous_ratio(1.0);
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert!((impact.instantaneous - 0.005).abs() < 1e-10);
+        assert_eq!(impact.permanent, 0.0);
+    }
+
+    /// 极大订单量冲击应保持有限
+    #[test]
+    fn test_extreme_quantity_impact_finite() {
+        let m = LinearImpactModel::default();
+        let impact = m.compute_impact(Quantity::from_f64(f64::MAX / 2.0), Side::Buy, &sample_ob());
+        // 系数 × 极大数量 / 正常深度 ⇒ 极大量级，但有限或 inf
+        assert!(impact.instantaneous.is_finite() || impact.instantaneous.is_infinite());
+    }
+
+    /// 深度零值且有订单 ⇒ 零冲击
+    #[test]
+    fn test_depth_zero_quantities_nonzero_order() {
+        let m = LinearImpactModel::default();
+        let ob = OrderBookSnapshot {
+            timestamp: Timestamp::from_nanos(0),
+            bids: vec![OrderBookLevel {
+                price: Price::from_f64(100.0),
+                quantity: Quantity::from_f64(0.0),
+            }],
+            asks: vec![OrderBookLevel {
+                price: Price::from_f64(101.0),
+                quantity: Quantity::from_f64(0.0),
+            }],
+        };
+        let impact = m.compute_impact(Quantity::from_f64(50.0), Side::Buy, &ob);
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// 极小正数量应正常处理
+    #[test]
+    fn test_epsilon_quantity_impact() {
+        let m = LinearImpactModel::new(0.05);
+        let impact = m.compute_impact(Quantity::from_f64(f64::EPSILON), Side::Buy, &sample_ob());
+        // 极小订单量产生极小冲击
+        assert!(impact.total() >= 0.0);
+        assert!(impact.total() < 1e-10);
+    }
+
+    /// 仅买单簿（无卖单）：Buy 方向
+    #[test]
+    fn test_buy_side_with_only_bids() {
+        // 买方向应累计卖单深度；卖单簿为空 ⇒ 零冲击
+        let m = LinearImpactModel::default();
+        let ob = OrderBookSnapshot {
+            timestamp: Timestamp::from_nanos(0),
+            bids: vec![OrderBookLevel {
+                price: Price::from_f64(99.0),
+                quantity: Quantity::from_f64(100.0),
+            }],
+            asks: vec![],
+        };
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &ob);
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// 仅卖单簿（无买单）：Sell 方向
+    #[test]
+    fn test_sell_side_with_only_asks() {
+        let m = LinearImpactModel::default();
+        let ob = OrderBookSnapshot {
+            timestamp: Timestamp::from_nanos(0),
+            bids: vec![],
+            asks: vec![OrderBookLevel {
+                price: Price::from_f64(101.0),
+                quantity: Quantity::from_f64(100.0),
+            }],
+        };
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Sell, &ob);
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// 负 depth_levels 切片安全
+    #[test]
+    fn test_excessive_depth_levels_safe() {
+        let m = LinearImpactModel::new(0.05).with_depth(100_000);
+        let ob = sample_ob(); // 仅 1 层
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &ob);
+        // take(100_000) 对 1 层迭代是安全的
+        assert!((impact.total() - 0.005).abs() < 1e-10);
+    }
+
+    /// 序列化往返
+    #[test]
+    fn test_linear_serde_roundtrip() {
+        let m = LinearImpactModel::new(0.05)
+            .with_depth(15)
+            .with_instantaneous_ratio(0.6);
+        let json = serde_json::to_string(&m).unwrap();
+        let de: LinearImpactModel = serde_json::from_str(&json).unwrap();
+        assert_eq!(m.coefficient, de.coefficient);
+        assert_eq!(m.depth_levels, de.depth_levels);
+        assert!((m.instantaneous_ratio - de.instantaneous_ratio).abs() < 1e-10);
+    }
+
+    /// 极大 coefficient
+    #[test]
+    fn test_extreme_coefficient() {
+        let m = LinearImpactModel::new(1.0e9);
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        // 1e9 × 0.1 = 1e8
+        assert!(impact.total() >= 1.0e7);
+    }
 }

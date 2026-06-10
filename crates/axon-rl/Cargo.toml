@@ -1,0 +1,31 @@
+[package]
+name = "axon-rl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON 强化学习环境：观测/动作/奖励/交易环境/Gymnasium 兼容接口（Phase 1B 阶段填充）"
+
+[features]
+default = []
+# PyO3 绑定（默认禁用，启用需 python toolchain）
+python = ["dep:pyo3"]
+
+[dependencies]
+axon-core = { workspace = true }
+axon-backtest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Python 绑定
+pyo3 = { version = "0.22", optional = true, features = ["auto-initialize"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }

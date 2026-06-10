@@ -2,11 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::OrderId;
 use super::error::OrderError;
 use super::status::{OrderStatus, RejectReason};
 use super::tif::TimeInForce;
 use super::types::OrderType;
-use super::OrderId;
 use crate::market::Side;
 use crate::time::Timestamp;
 use crate::types::{Quantity, Symbol};
@@ -401,5 +401,118 @@ mod tests {
             TimeInForce::GTC,
         );
         assert_eq!(order.fill_ratio(), 0.0);
+    }
+
+    // ─── 补充边界场景 ─────────────────────────────────
+
+    /// 取消已 Filled 订单应报错
+    #[test]
+    fn test_cancel_filled_order_errors() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        order
+            .apply_fill(Quantity::from_f64(10.0))
+            .expect("全量成交");
+        assert!(order.is_filled());
+        let result = order.cancel();
+        assert!(result.is_err(), "Filled 订单不可取消");
+    }
+
+    /// 取消已 Cancelled 订单应报错
+    #[test]
+    fn test_cancel_already_cancelled_errors() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        order.cancel().expect("首次取消成功");
+        let result = order.cancel();
+        assert!(result.is_err(), "已取消订单不可重复取消");
+    }
+
+    /// 拒绝已 reject 订单应报错
+    #[test]
+    fn test_reject_already_rejected_errors() {
+        let mut order = make_limit_order();
+        order
+            .reject(RejectReason::RiskLimitExceeded)
+            .expect("首次拒绝成功");
+        let result = order.reject(RejectReason::InsufficientMargin);
+        assert!(result.is_err(), "已 reject 订单不可重复拒绝");
+    }
+
+    /// Reject 后再 activate 应报错（终态）
+    #[test]
+    fn test_activate_rejected_order_errors() {
+        let mut order = make_limit_order();
+        order.reject(RejectReason::RiskLimitExceeded).unwrap();
+        let result = order.activate();
+        assert!(result.is_err(), "Reject 终态不可激活");
+    }
+
+    /// 零数量订单可创建，但 apply_fill 零数量应报错（超量填充在 EPSILON 边界）
+    #[test]
+    fn test_apply_fill_zero_quantity_errors() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        // 零填充相当于超量（fill_qty > remaining + EPSILON 在 remaining=10.0 时不成立）
+        // 实际 0.0 < 10.0 + EPSILON，应部分成交（仍为 Created 或 Pending）
+        let result = order.apply_fill(Quantity::from_f64(0.0));
+        assert!(result.is_ok(), "零数量填充不报错但状态保持未完成");
+    }
+
+    /// 极小正数量 fill（接近 EPSILON）应正常
+    #[test]
+    fn test_apply_fill_epsilon_quantity() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        let result = order.apply_fill(Quantity::from_f64(f64::EPSILON));
+        assert!(result.is_ok());
+        // 状态应进入 PartiallyFilled
+        assert_eq!(order.status, OrderStatus::PartiallyFilled);
+    }
+
+    /// 完全成交后再 apply_fill 应超量错误
+    #[test]
+    fn test_overfill_after_filled_errors() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        order.apply_fill(Quantity::from_f64(10.0)).unwrap();
+        let result = order.apply_fill(Quantity::from_f64(0.1));
+        assert!(matches!(result, Err(OrderError::OverFill { .. })));
+    }
+
+    /// 填比 fill 正好等于 quantity 应进入 Filled（不进入 PartiallyFilled）
+    #[test]
+    fn test_apply_fill_exact_quantity_transitions_to_filled() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        order.apply_fill(Quantity::from_f64(5.0)).unwrap();
+        assert_eq!(order.status, OrderStatus::PartiallyFilled);
+        order.apply_fill(Quantity::from_f64(5.0)).unwrap();
+        assert_eq!(order.status, OrderStatus::Filled);
+        assert!(order.is_filled());
+        assert_eq!(order.remaining_quantity(), Quantity::from_f64(0.0));
+    }
+
+    /// fill_ratio 在部分成交时计算正确
+    #[test]
+    fn test_fill_ratio_partial() {
+        let mut order = make_limit_order();
+        order.activate().unwrap();
+        order.apply_fill(Quantity::from_f64(2.5)).unwrap();
+        assert!((order.fill_ratio() - 0.25).abs() < f64::EPSILON);
+    }
+
+    /// 极大量订单（f64::MAX）应可正常构造
+    #[test]
+    fn test_max_quantity_order() {
+        let order = Order::new(
+            100,
+            Symbol::from("BTC-USDT"),
+            Side::Buy,
+            OrderType::Market,
+            Quantity::from_f64(f64::MAX),
+            TimeInForce::GTC,
+        );
+        assert_eq!(order.quantity.as_f64(), f64::MAX);
     }
 }

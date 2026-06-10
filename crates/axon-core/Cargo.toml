@@ -28,6 +28,7 @@ tracing = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 chrono = { workspace = true }
 rand = { workspace = true }
+rust_decimal_macros = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

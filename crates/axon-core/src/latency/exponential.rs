@@ -99,7 +99,10 @@ mod tests {
             .map(|_| model.sample_delay(PathType::MarketData).as_secs_f64() * 1000.0)
             .sum();
         let mean = sum / n as f64;
-        assert!((mean - 10.0).abs() < 1.0, "expected mean ≈ 10ms, got {mean}");
+        assert!(
+            (mean - 10.0).abs() < 1.0,
+            "expected mean ≈ 10ms, got {mean}"
+        );
     }
 
     #[test]
@@ -132,5 +135,86 @@ mod tests {
         assert!((p.base_delay_ms - 10.0).abs() < 1e-6);
         // std == mean
         assert!((p.jitter_ms.expect("jitter") - 10.0).abs() < 1e-6);
+    }
+
+    // ─── 边界测试 ──────────────────────────────────────────
+
+    /// 负 rate 回退到 1.0
+    #[test]
+    fn test_negative_rate_falls_back() {
+        let model = ExponentialLatencyModel::uniform(-100.0);
+        // rate=1.0 ⇒ mean = 1.0s = 1000ms
+        for _ in 0..100 {
+            let d = model.sample_delay(PathType::OrderSubmit);
+            // rate=1.0 ⇒ mean = 1000ms
+            assert!(d < Duration::from_secs(60));
+        }
+    }
+
+    /// 极大 rate（= 1e9）⇒ 均值约 1µs
+    #[test]
+    fn test_extreme_large_rate() {
+        let model = ExponentialLatencyModel::uniform(1e9);
+        // 1/1e9 s = 1ns，但单位是毫秒转换时极小
+        let n = 1_000;
+        let sum_ns: u128 = (0..n)
+            .map(|_| model.sample_delay(PathType::MarketData).as_nanos())
+            .sum();
+        // 平均应远小于 1ms
+        assert!((sum_ns / (n as u128)) < 1_000_000);
+    }
+
+    /// 极小正 rate（= 1e-9）⇒ 均值约 1e6 秒（极大）
+    #[test]
+    fn test_extreme_small_rate() {
+        let model = ExponentialLatencyModel::uniform(1e-9);
+        // 1/1e-9 s = 1e9 秒 ⇒ 不实际但应不 panic
+        let d = model.sample_delay(PathType::MarketData);
+        // 可能溢出为 inf，但 Duration 应正常处理
+        assert!(d.as_secs_f64() >= 0.0);
+    }
+
+    /// from_mean_ms 零值
+    #[test]
+    fn test_from_mean_ms_zero_falls_back() {
+        let model = ExponentialLatencyModel::from_mean_ms(0.0);
+        // mean_ms = 0 ⇒ rate = 1.0 (回退)
+        let d = model.sample_delay(PathType::MarketData);
+        // rate=1 ⇒ mean = 1s
+        assert!(d.as_secs_f64() >= 0.0);
+        assert!(d.as_secs_f64() < 60.0);
+    }
+
+    /// from_mean_ms 负值
+    #[test]
+    fn test_from_mean_ms_negative_falls_back() {
+        let model = ExponentialLatencyModel::from_mean_ms(-5.0);
+        // 负 mean_ms ⇒ rate = 1.0
+        let d = model.sample_delay(PathType::MarketData);
+        assert!(d.as_secs_f64() >= 0.0);
+        assert!(d.as_secs_f64() < 60.0);
+    }
+
+    /// params 在空表时 base_delay_ms 应为 0
+    #[test]
+    fn test_params_empty_table() {
+        let model = ExponentialLatencyModel {
+            rates: HashMap::new(),
+        };
+        let p = model.params();
+        // avg_rate = 0 ⇒ 1/MIN_POSITIVE 极大 ⇒ mean_ms 极大
+        assert!(p.base_delay_ms > 0.0);
+        assert!(p.jitter_ms.is_some());
+    }
+
+    /// 序列化往返
+    #[test]
+    fn test_exponential_serde_roundtrip() {
+        let model = ExponentialLatencyModel::uniform(100.0);
+        let json = serde_json::to_string(&model).unwrap();
+        let de: ExponentialLatencyModel = serde_json::from_str(&json).unwrap();
+        // 重新采样仍正确
+        let d = de.sample_delay(PathType::MarketData);
+        assert!(d.as_secs_f64() >= 0.0);
     }
 }

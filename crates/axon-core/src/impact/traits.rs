@@ -74,6 +74,7 @@ fn _assert_impact_model_send_sync<T: ImpactModel>() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::impact::AdaptiveImpactModel;
     use crate::market::{OrderBookLevel, OrderBookSnapshot};
     use crate::time::Timestamp;
     use crate::types::{Price, Quantity};
@@ -127,5 +128,103 @@ mod tests {
         let m = sqrt_impact();
         assert_eq!(m.name(), "PowerLawImpact");
         assert!(m.params().contains("exponent=0.5"));
+    }
+
+    // ─── 边界测试 ──────────────────────────────────────────
+
+    /// 工厂传入零 coefficient 应创建合法模型（零冲击）
+    #[test]
+    fn test_factory_linear_zero_coefficient() {
+        let m: Box<dyn ImpactModel> = create_model(ImpactModelConfig::Linear {
+            coefficient: 0.0,
+            depth_levels: 10,
+            instantaneous_ratio: 0.7,
+        });
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// 工厂传入负 ratio 应 panic
+    #[test]
+    #[should_panic(expected = "必须在 [0, 1] 范围")]
+    fn test_factory_linear_negative_ratio_panics() {
+        let _: Box<dyn ImpactModel> = create_model(ImpactModelConfig::Linear {
+            coefficient: 0.05,
+            depth_levels: 10,
+            instantaneous_ratio: -0.1,
+        });
+    }
+
+    /// 工厂传入 ratio > 1.0 应 panic
+    #[test]
+    #[should_panic(expected = "必须在 [0, 1] 范围")]
+    fn test_factory_linear_ratio_too_large_panics() {
+        let _: Box<dyn ImpactModel> = create_model(ImpactModelConfig::Linear {
+            coefficient: 0.05,
+            depth_levels: 10,
+            instantaneous_ratio: 1.5,
+        });
+    }
+
+    /// 工厂传入 ratio = 0 / 1.0 边界
+    #[test]
+    fn test_factory_linear_ratio_boundary_ok() {
+        for ratio in [0.0_f64, 1.0_f64] {
+            let m: Box<dyn ImpactModel> = create_model(ImpactModelConfig::Linear {
+                coefficient: 0.05,
+                depth_levels: 10,
+                instantaneous_ratio: ratio,
+            });
+            // 验证模型可调用
+            let _impact = m.compute_impact(Quantity::from_f64(1.0), Side::Buy, &sample_ob());
+        }
+    }
+
+    /// 工厂传入 zero depth_levels
+    #[test]
+    fn test_factory_linear_zero_depth() {
+        let m: Box<dyn ImpactModel> = create_model(ImpactModelConfig::Linear {
+            coefficient: 0.05,
+            depth_levels: 0,
+            instantaneous_ratio: 0.7,
+        });
+        // depth=0 ⇒ take(0) ⇒ 总深度 = 0 ⇒ 零冲击
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// 工厂 PowerLaw exponent 越界
+    #[test]
+    #[should_panic(expected = "幂律指数应在 (0, 2] 范围")]
+    fn test_factory_power_law_exponent_too_large_panics() {
+        let _: Box<dyn ImpactModel> = create_model(ImpactModelConfig::PowerLaw {
+            coefficient: 0.1,
+            exponent: 2.5,
+            depth_levels: 10,
+            instantaneous_ratio: 0.7,
+        });
+    }
+
+    /// 工厂 PowerLaw exponent = 2 边界
+    #[test]
+    fn test_factory_power_law_exponent_two_ok() {
+        let m: Box<dyn ImpactModel> = create_model(ImpactModelConfig::PowerLaw {
+            coefficient: 0.01,
+            exponent: 2.0,
+            depth_levels: 10,
+            instantaneous_ratio: 0.7,
+        });
+        let _impact = m.compute_impact(Quantity::from_f64(1.0), Side::Buy, &sample_ob());
+    }
+
+    /// ImpactModel 应满足 Send + Sync（可跨线程使用）
+    #[test]
+    fn test_impact_model_trait_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        // 三种模型都是 Send + Sync
+        assert_send_sync::<LinearImpactModel>();
+        assert_send_sync::<PowerLawImpactModel>();
+        // AdaptiveImpactModel 持有 Box<dyn ImpactModel>，也应为 Send + Sync
+        assert_send_sync::<AdaptiveImpactModel>();
     }
 }

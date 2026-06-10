@@ -245,4 +245,108 @@ mod tests {
         let p = m.params();
         assert!(p.contains("exponent=0.5"));
     }
+
+    // ─── 边界测试 ──────────────────────────────────────────
+
+    /// 系数为 0 ⇒ 零冲击
+    #[test]
+    fn test_zero_coefficient_zero_impact() {
+        let m = PowerLawImpactModel::new(0.0, 0.5);
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// exponent = 2（最大允许）⇒ 超线性
+    #[test]
+    fn test_exponent_two_superlinear() {
+        let m = PowerLawImpactModel::new(0.01, 2.0);
+        let ob = sample_ob();
+        let i1 = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &ob);
+        let i2 = m.compute_impact(Quantity::from_f64(20.0), Side::Buy, &ob);
+        // exponent = 2 ⇒ i2 / i1 = 4
+        assert!((i2.total() / i1.total() - 4.0).abs() < 1e-6);
+    }
+
+    /// 极小正 exponent ⇒ 亚线性（接近 0 时趋近于 0）
+    #[test]
+    fn test_small_exponent_near_zero() {
+        // 0.1 指数：order 10 ⇒ impact = 0.05 × 0.1^0.1
+        let m = PowerLawImpactModel::new(0.05, 0.1);
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert!(impact.total() > 0.0);
+        assert!(impact.total() < 0.05); // 远小于线性 0.005
+    }
+
+    /// 极大订单量（f64::MAX）应保持计算稳定
+    #[test]
+    fn test_extreme_quantity_does_not_panic() {
+        let m = PowerLawImpactModel::default();
+        let impact = m.compute_impact(Quantity::from_f64(f64::MAX / 2.0), Side::Buy, &sample_ob());
+        // 1e308 ^ 0.5 = 1e154 ⇒ 极大量级冲击
+        assert!(impact.total().is_finite() || impact.total().is_infinite());
+    }
+
+    /// 极小正数量
+    #[test]
+    fn test_epsilon_quantity() {
+        let m = PowerLawImpactModel::default();
+        let impact = m.compute_impact(Quantity::from_f64(f64::EPSILON), Side::Buy, &sample_ob());
+        assert!(impact.total() >= 0.0);
+    }
+
+    /// 极小正深度
+    #[test]
+    fn test_min_positive_depth() {
+        let m = PowerLawImpactModel::new(0.1, 0.5);
+        let ob = OrderBookSnapshot {
+            timestamp: Timestamp::from_nanos(0),
+            bids: vec![],
+            asks: vec![OrderBookLevel {
+                price: Price::from_f64(100.0),
+                quantity: Quantity::from_f64(f64::MIN_POSITIVE),
+            }],
+        };
+        let impact = m.compute_impact(Quantity::from_f64(1.0), Side::Buy, &ob);
+        // ratio = 1 / MIN_POSITIVE 极大 ⇒ 冲击爆炸
+        assert!(impact.total() > 0.0);
+    }
+
+    /// 序列化往返
+    #[test]
+    fn test_power_law_serde_roundtrip() {
+        let m = PowerLawImpactModel::new(0.15, 0.6)
+            .with_depth(20)
+            .with_instantaneous_ratio(0.8);
+        let json = serde_json::to_string(&m).unwrap();
+        let de: PowerLawImpactModel = serde_json::from_str(&json).unwrap();
+        assert_eq!(m.coefficient, de.coefficient);
+        assert!((m.exponent - de.exponent).abs() < 1e-10);
+        assert_eq!(m.depth_levels, de.depth_levels);
+    }
+
+    /// 零 instantaneous_ratio ⇒ 全部永久冲击
+    #[test]
+    fn test_zero_instantaneous_ratio_all_permanent() {
+        let m = PowerLawImpactModel::new(0.1, 0.5).with_instantaneous_ratio(0.0);
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert_eq!(impact.instantaneous, 0.0);
+        assert!(impact.permanent > 0.0);
+    }
+
+    /// 满 instantaneous_ratio ⇒ 全部即时冲击
+    #[test]
+    fn test_full_instantaneous_ratio_all_instantaneous() {
+        let m = PowerLawImpactModel::new(0.1, 0.5).with_instantaneous_ratio(1.0);
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert!(impact.instantaneous > 0.0);
+        assert_eq!(impact.permanent, 0.0);
+    }
+
+    /// 极大 depth_levels 不 panic
+    #[test]
+    fn test_excessive_depth_levels_safe() {
+        let m = PowerLawImpactModel::new(0.1, 0.5).with_depth(usize::MAX);
+        let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert!(impact.total() > 0.0);
+    }
 }

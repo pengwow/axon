@@ -51,7 +51,8 @@ impl SchedulerContext {
     /// - 在 `Scheduler` 借用事件队列期间不会再次借用
     pub unsafe fn event_queue_mut(&mut self) -> &mut EventQueue {
         debug_assert!(!self.event_queue.is_null());
-        &mut *self.event_queue
+        // Rust 2024 edition 要求 unsafe 函数内的 unsafe 操作显式包裹 unsafe 块
+        unsafe { &mut *self.event_queue }
     }
 }
 

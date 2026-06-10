@@ -186,4 +186,80 @@ mod tests {
         assert!(Quantity::default().is_zero());
         assert!(!Quantity::from_f64(0.001).is_zero());
     }
+
+    // ─── 边界场景 ──────────────────────────────────────
+
+    /// NaN 输入应归零
+    #[test]
+    fn test_quantity_nan_clamped_to_zero() {
+        let q = Quantity::from_f64(f64::NAN);
+        assert!(q.as_f64().is_finite());
+        assert_eq!(q.as_f64(), 0.0);
+        assert!(q.is_zero());
+    }
+
+    /// +∞ / -∞ 应归零
+    #[test]
+    fn test_quantity_infinity_clamped_to_zero() {
+        assert_eq!(Quantity::from_f64(f64::INFINITY).as_f64(), 0.0);
+        assert_eq!(Quantity::from_f64(f64::NEG_INFINITY).as_f64(), 0.0);
+    }
+
+    /// 极大正值应保留（Position 满仓多头）
+    #[test]
+    fn test_quantity_max_positive_preserved() {
+        let q = Quantity::from_f64(f64::MAX);
+        assert_eq!(q.as_f64(), f64::MAX);
+    }
+
+    /// 极大负值应保留（Position 满仓空头）
+    #[test]
+    fn test_quantity_max_negative_preserved() {
+        let q = Quantity::from_f64(f64::MIN);
+        assert_eq!(q.as_f64(), f64::MIN);
+        assert!(q.as_f64() < 0.0);
+    }
+
+    /// 极小正数应保留
+    #[test]
+    fn test_quantity_min_positive_preserved() {
+        let q = Quantity::from_f64(f64::MIN_POSITIVE);
+        assert_eq!(q.as_f64(), f64::MIN_POSITIVE);
+    }
+
+    /// 零数量应保留
+    #[test]
+    fn test_quantity_zero_preserved() {
+        let q = Quantity::from_f64(0.0);
+        assert_eq!(q.as_f64(), 0.0);
+        assert!(q.is_zero());
+    }
+
+    /// Hash 一致性（含负数）
+    #[test]
+    fn test_quantity_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        for v in [0.0_f64, 1.0, -1.0, f64::MAX, f64::MIN, f64::MIN_POSITIVE] {
+            let a = Quantity::from_f64(v);
+            let b = Quantity::from_f64(v);
+            let mut ha = DefaultHasher::new();
+            let mut hb = DefaultHasher::new();
+            a.hash(&mut ha);
+            b.hash(&mut hb);
+            assert_eq!(ha.finish(), hb.finish(), "Quantity({v}) 哈希不一致");
+        }
+    }
+
+    /// 负数与正数比较（Position 多空比较）
+    #[test]
+    fn test_quantity_negative_vs_positive_ordering() {
+        let neg = Quantity::from_f64(-10.0);
+        let zero = Quantity::from_f64(0.0);
+        let pos = Quantity::from_f64(10.0);
+        assert!(neg < zero);
+        assert!(zero < pos);
+        assert!(neg < pos);
+    }
 }

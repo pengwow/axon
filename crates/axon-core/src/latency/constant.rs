@@ -74,11 +74,7 @@ impl LatencyModel for ConstantLatencyModel {
 
     fn params(&self) -> LatencyParams {
         let count = self.delays.len() as f64;
-        let sum_ms: f64 = self
-            .delays
-            .values()
-            .map(|d| d.as_secs_f64() * 1000.0)
-            .sum();
+        let sum_ms: f64 = self.delays.values().map(|d| d.as_secs_f64() * 1000.0).sum();
         let avg = if count > 0.0 { sum_ms / count } else { 0.0 };
         LatencyParams {
             model_type: "constant".to_string(),
@@ -162,5 +158,107 @@ mod tests {
         assert!((p.base_delay_ms - 5.0).abs() < 1e-9);
         assert!(p.jitter_ms.is_none());
         assert_eq!(p.path_overrides.len(), PathType::ALL.len());
+    }
+
+    // ─── 边界测试 ──────────────────────────────────────────
+
+    /// 零延迟 uniform 模型应返回 0
+    #[test]
+    fn test_zero_uniform_delay() {
+        let model = ConstantLatencyModel::uniform(Duration::ZERO);
+        for path in PathType::ALL {
+            assert_eq!(model.sample_delay(path), Duration::ZERO);
+        }
+    }
+
+    /// 极大延迟（u64::MAX）应保留
+    #[test]
+    fn test_extreme_large_delay() {
+        let big = Duration::from_secs(60 * 60 * 24 * 365); // 1 年
+        let model = ConstantLatencyModel::uniform(big);
+        assert_eq!(model.sample_delay(PathType::MarketData), big);
+    }
+
+    /// 空 HashMap 模型 ⇒ 所有路径返回 0
+    #[test]
+    fn test_empty_hashmap_returns_zero() {
+        let model = ConstantLatencyModel {
+            delays: HashMap::new(),
+        };
+        for path in PathType::ALL {
+            assert_eq!(model.sample_delay(path), Duration::ZERO);
+        }
+    }
+
+    /// set_path 覆盖原值（包括覆盖为 0）
+    #[test]
+    fn test_set_path_to_zero() {
+        let mut model = ConstantLatencyModel::uniform(Duration::from_millis(100));
+        model.set_path(PathType::OrderSubmit, Duration::ZERO);
+        assert_eq!(model.sample_delay(PathType::OrderSubmit), Duration::ZERO);
+        // 其他路径仍为 100ms
+        assert_eq!(
+            model.sample_delay(PathType::MarketData),
+            Duration::from_millis(100)
+        );
+    }
+
+    /// params 在空表时 base_delay_ms 应为 0（不应除零）
+    #[test]
+    fn test_params_empty_table() {
+        let model = ConstantLatencyModel {
+            delays: HashMap::new(),
+        };
+        let p = model.params();
+        assert_eq!(p.base_delay_ms, 0.0);
+        assert!(p.path_overrides.is_empty());
+    }
+
+    /// with_paths 全部传 0
+    #[test]
+    fn test_with_paths_all_zero() {
+        let model =
+            ConstantLatencyModel::with_paths(Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        assert_eq!(model.sample_delay(PathType::MarketData), Duration::ZERO);
+        assert_eq!(model.sample_delay(PathType::OrderSubmit), Duration::ZERO);
+        assert_eq!(model.sample_delay(PathType::OrderCancel), Duration::ZERO);
+        assert_eq!(model.sample_delay(PathType::AccountQuery), Duration::ZERO);
+        // Heartbeat 默认 50ms
+        assert_eq!(
+            model.sample_delay(PathType::Heartbeat),
+            Duration::from_millis(50)
+        );
+    }
+
+    /// get 返回 Some/None
+    #[test]
+    fn test_get_returns_some_or_none() {
+        let mut model = ConstantLatencyModel::uniform(Duration::from_millis(5));
+        model.delays.remove(&PathType::Heartbeat);
+        assert_eq!(
+            model.get(PathType::MarketData),
+            Some(Duration::from_millis(5))
+        );
+        assert_eq!(model.get(PathType::Heartbeat), None);
+    }
+
+    /// 序列化往返
+    #[test]
+    fn test_constant_serde_roundtrip() {
+        let model = ConstantLatencyModel::with_paths(
+            Duration::from_millis(2),
+            Duration::from_millis(10),
+            Duration::from_millis(8),
+        );
+        let json = serde_json::to_string(&model).unwrap();
+        let de: ConstantLatencyModel = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            de.sample_delay(PathType::MarketData),
+            Duration::from_millis(2)
+        );
+        assert_eq!(
+            de.sample_delay(PathType::OrderSubmit),
+            Duration::from_millis(10)
+        );
     }
 }

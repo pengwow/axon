@@ -51,10 +51,10 @@ mod tests {
 
     impl EventHandler for TickRecorder {
         fn on_event(&mut self, event: &Event) {
-            if let Event::MarketData(md) = event {
-                if let MarketDataPayload::Tick(tick) = &md.payload {
-                    self.prices.push(tick.price.as_f64());
-                }
+            if let Event::MarketData(md) = event
+                && let MarketDataPayload::Tick(tick) = &md.payload
+            {
+                self.prices.push(tick.price.as_f64());
             }
         }
 

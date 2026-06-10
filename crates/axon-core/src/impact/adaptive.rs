@@ -161,4 +161,102 @@ mod tests {
         assert!(p.contains("LinearImpact"));
         assert!(p.contains("vol_scale=1.5"));
     }
+
+    // ─── 边界测试 ──────────────────────────────────────────
+
+    /// 极大波动率应放大冲击
+    #[test]
+    fn test_extreme_volatility_amplifies_impact() {
+        let base: Box<dyn ImpactModel> = Box::new(crate::impact::LinearImpactModel::new(0.05));
+        // vol_scale = 1.0, vol = 100.0 ⇒ scale = 101.0
+        let adaptive = AdaptiveImpactModel::new(base, 1.0).with_volatility(100.0);
+        let impact = adaptive.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        // 0.005 × 101 = 0.505
+        assert!((impact.total() - 0.505).abs() < 1e-6);
+    }
+
+    /// 零系数基础模型 + 非零缩放 ⇒ 仍零冲击
+    #[test]
+    fn test_zero_base_with_scale_keeps_zero() {
+        let base: Box<dyn ImpactModel> = Box::new(crate::impact::LinearImpactModel::new(0.0));
+        let adaptive = AdaptiveImpactModel::new(base, 5.0).with_volatility(10.0);
+        let impact = adaptive.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// 零订单量（任何缩放）⇒ 零冲击
+    #[test]
+    fn test_zero_quantity_always_zero() {
+        let base: Box<dyn ImpactModel> = Box::new(crate::impact::LinearImpactModel::new(0.05));
+        let adaptive = AdaptiveImpactModel::new(base, 100.0).with_volatility(50.0);
+        let impact = adaptive.compute_impact(Quantity::from_f64(0.0), Side::Buy, &sample_ob());
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// 空订单簿 + 任意缩放 ⇒ 零冲击
+    #[test]
+    fn test_empty_orderbook_with_scale() {
+        use crate::market::OrderBookSnapshot;
+        use crate::time::Timestamp;
+        let base: Box<dyn ImpactModel> = Box::new(crate::impact::LinearImpactModel::new(0.05));
+        let adaptive = AdaptiveImpactModel::new(base, 5.0).with_volatility(2.0);
+        let ob = OrderBookSnapshot::empty(Timestamp::from_nanos(0));
+        let impact = adaptive.compute_impact(Quantity::from_f64(10.0), Side::Buy, &ob);
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// 零波动率 + 零缩放 ⇒ 零冲击
+    #[test]
+    fn test_zero_vol_and_scale_keeps_zero() {
+        let base: Box<dyn ImpactModel> = Box::new(crate::impact::LinearImpactModel::new(0.05));
+        let adaptive = AdaptiveImpactModel::new(base, 0.0); // vol_scale = 0
+        let impact = adaptive.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        assert_eq!(impact, Impact::zero());
+    }
+
+    /// with_volatility 负值应 panic
+    #[test]
+    #[should_panic(expected = "波动率必须非负")]
+    fn test_with_volatility_rejects_negative() {
+        let base: Box<dyn ImpactModel> = Box::new(crate::impact::LinearImpactModel::new(0.05));
+        AdaptiveImpactModel::new(base, 1.0).with_volatility(-0.1);
+    }
+
+    /// Debug 输出包含关键字段
+    #[test]
+    fn test_debug_contains_key_fields() {
+        let base: Box<dyn ImpactModel> = Box::new(crate::impact::LinearImpactModel::new(0.05));
+        let m = AdaptiveImpactModel::new(base, 1.5).with_volatility(0.3);
+        let s = format!("{m:?}");
+        assert!(s.contains("AdaptiveImpactModel"));
+        assert!(s.contains("volatility_scale"));
+        assert!(s.contains("current_volatility"));
+        assert!(s.contains("LinearImpact"));
+    }
+
+    /// 极大缩放（接近 f64::MAX/2）应不 panic
+    #[test]
+    fn test_extreme_volatility_scale_does_not_panic() {
+        let base: Box<dyn ImpactModel> = Box::new(crate::impact::LinearImpactModel::new(0.05));
+        let adaptive = AdaptiveImpactModel::new(base, f64::MAX / 1e10).with_volatility(0.0);
+        let impact = adaptive.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        // 极大量级冲击（可能为 inf）
+        assert!(impact.total() >= 0.0);
+    }
+
+    /// 链式：base=PowerLaw，验证缩放生效
+    #[test]
+    fn test_adaptive_wrapping_power_law() {
+        let base: Box<dyn ImpactModel> =
+            Box::new(crate::impact::PowerLawImpactModel::new(0.1, 0.5));
+        let adaptive = AdaptiveImpactModel::new(base, 2.0).with_volatility(0.0);
+        // 缩放因子 = 2.0
+        let impact = adaptive.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        let base_impact: Box<dyn ImpactModel> =
+            Box::new(crate::impact::PowerLawImpactModel::new(0.1, 0.5));
+        let base_only =
+            base_impact.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
+        // 缩放应等于 2× 基础
+        assert!((impact.total() - base_only.total() * 2.0).abs() < 1e-10);
+    }
 }

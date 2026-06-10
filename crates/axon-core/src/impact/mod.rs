@@ -25,5 +25,5 @@ pub use adaptive::AdaptiveImpactModel;
 pub use error::{ImpactModelError, ImpactModelResult};
 pub use linear::LinearImpactModel;
 pub use power_law::PowerLawImpactModel;
-pub use traits::{create_model, linear_impact, sqrt_impact, ImpactModel};
+pub use traits::{ImpactModel, create_model, linear_impact, sqrt_impact};
 pub use types::{Impact, ImpactModelConfig};

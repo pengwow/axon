@@ -18,6 +18,6 @@ pub mod matching;
 
 pub use engine::BacktestEngine;
 pub use matching::{
-    build_limit_order, L1MatchingEngine, L2MatchingEngine, MatchFill, MatchingEngine,
-    MatchingError, MatchingStats, OrderAmend, OrderBookEntry, OrderLocation, SubmitResult,
+    L1MatchingEngine, L2MatchingEngine, MatchFill, MatchingEngine, MatchingError, MatchingStats,
+    OrderAmend, OrderBookEntry, OrderLocation, SubmitResult, build_limit_order,
 };

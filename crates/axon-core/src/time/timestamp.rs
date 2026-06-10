@@ -441,4 +441,126 @@ mod tests {
         assert!(s.starts_with("1970-01-01T00:00:00"));
         assert!(s.ends_with('Z'));
     }
+
+    // ─── 补充边界场景 ─────────────────────────────────
+
+    /// Unix 纪元 (1970-01-01) 应正常序列化
+    #[test]
+    fn test_timestamp_unix_epoch() {
+        let ts = Timestamp::from_nanos(0);
+        let s = ts.to_rfc3339();
+        assert!(s.starts_with("1970-01-01T00:00:00"));
+    }
+
+    /// 闰秒附近时间戳：2016-12-31T23:59:60Z 应当可被规范化为 23:59:59
+    /// 注：chrono 会拒绝 23:59:60，但 23:59:59 与 00:00:00 是合法的连续时间戳
+    #[test]
+    fn test_timestamp_leap_second_boundary() {
+        // 2016-12-31T23:59:59Z
+        let pre = Timestamp::from_secs(1_483_228_799);
+        // 2017-01-01T00:00:00Z
+        let post = Timestamp::from_secs(1_483_228_800);
+        // 两者相差 1 秒
+        let diff = post - pre;
+        assert_eq!(diff, Duration::from_secs(1));
+        // pre 应在 post 之前
+        assert!(pre.is_before(&post));
+    }
+
+    /// Year 2038 边界（i32::MAX 秒）
+    #[test]
+    fn test_timestamp_y2038_boundary() {
+        // i32::MAX 秒 = 2038-01-19T03:14:07Z
+        let y2038_max = Timestamp::from_secs(2_147_483_647);
+        let y2038_plus_one = Timestamp::from_secs(2_147_483_648);
+        assert!(y2038_max.is_before(&y2038_plus_one));
+        // 纳秒表示应仍正确
+        assert_eq!(y2038_plus_one.nanos, 2_147_483_648 * 1_000_000_000);
+    }
+
+    /// 微秒构造溢出应 panic
+    #[test]
+    #[should_panic(expected = "微秒转纳秒溢出")]
+    fn test_timestamp_from_micros_overflow() {
+        let _ = Timestamp::from_micros(i64::MAX);
+    }
+
+    /// 毫秒构造溢出应 panic
+    #[test]
+    #[should_panic(expected = "毫秒转纳秒溢出")]
+    fn test_timestamp_from_millis_overflow() {
+        let _ = Timestamp::from_millis(i64::MAX);
+    }
+
+    /// 秒构造溢出应 panic
+    #[test]
+    #[should_panic(expected = "秒转纳秒溢出")]
+    fn test_timestamp_from_secs_overflow() {
+        let _ = Timestamp::from_secs(i64::MAX);
+    }
+
+    /// 减法下溢应 panic
+    #[test]
+    #[should_panic(expected = "减法溢出")]
+    fn test_timestamp_sub_underflow_panics() {
+        let ts = Timestamp::from_nanos(i64::MIN);
+        let _ = ts.sub(Duration::from_nanos(1));
+    }
+
+    /// AddAssign 溢出应 panic
+    #[test]
+    #[should_panic(expected = "加法溢出")]
+    fn test_timestamp_add_assign_overflow() {
+        let mut ts = Timestamp::from_nanos(i64::MAX);
+        ts += Duration::from_nanos(1);
+    }
+
+    /// SubAssign 下溢应 panic
+    #[test]
+    #[should_panic(expected = "减法溢出")]
+    fn test_timestamp_sub_assign_underflow() {
+        let mut ts = Timestamp::from_nanos(i64::MIN);
+        ts -= Duration::from_nanos(1);
+    }
+
+    /// 截断到微秒精度
+    #[test]
+    fn test_timestamp_truncate_to_micros() {
+        let ts = Timestamp::from_nanos(1_700_000_000_123_456_789);
+        let truncated = ts.truncate(TimePrecision::Micros);
+        assert_eq!(truncated.nanos, 1_700_000_000_123_456_000);
+    }
+
+    /// 截断到纳秒精度（恒等）
+    #[test]
+    fn test_timestamp_truncate_to_nanos_is_identity() {
+        let ts = Timestamp::from_nanos(1_700_000_000_123_456_789);
+        let truncated = ts.truncate(TimePrecision::Nanos);
+        assert_eq!(truncated.nanos, ts.nanos);
+    }
+
+    /// 负时间戳（1970 之前）应正常工作
+    #[test]
+    fn test_timestamp_negative_pre_epoch() {
+        let ts = Timestamp::from_nanos(-1_000_000_000); // 1969-12-31T23:59:59Z
+        let s = ts.to_rfc3339();
+        assert!(s.starts_with("1969-12-31T23:59:59"), "实际: {s}");
+    }
+
+    /// from_rfc3339 拒绝非法字符串
+    #[test]
+    fn test_timestamp_invalid_rfc3339() {
+        let result = Timestamp::from_rfc3339("not a valid timestamp");
+        assert!(result.is_err());
+    }
+
+    /// 跨天时间戳（连续）
+    #[test]
+    fn test_timestamp_cross_day_boundary() {
+        // 2024-01-01T23:59:59Z -> 2024-01-02T00:00:00Z
+        let end_of_day = Timestamp::from_secs(1_704_067_199);
+        let start_of_next_day = Timestamp::from_secs(1_704_067_200);
+        assert!(end_of_day.is_before(&start_of_next_day));
+        assert_eq!(start_of_next_day - end_of_day, Duration::from_secs(1));
+    }
 }

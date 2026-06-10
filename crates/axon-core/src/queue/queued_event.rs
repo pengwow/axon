@@ -40,8 +40,8 @@ impl Ord for QueuedEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::system::SystemAction;
     use crate::event::SystemEvent;
+    use crate::event::system::SystemAction;
     use std::collections::BinaryHeap;
 
     fn make_event(seq: u64, ts_nanos: i64) -> QueuedEvent {

@@ -140,6 +140,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 38 单元测试覆盖（合计 335 个），全部通过
   - `lib.rs` 顶层 re-export 扩展：新增 12 个 latency 类型
   - 工作区新增 `rand = "0.8"` 依赖（仅 axon-core 使用）
+- **Phase 1A P2**：`axon-core::fee` 模块（费用模型）
+  - `TradeRole`：`Maker` / `Taker`（含 `as_str` / `Display`）
+  - `ExchangeId`：`Binance` / `CoinbasePro` / `Kraken` / `Bybit` / `Okx` / `Custom(String)`（注意：`Custom` 用 `String` 而非 `&'static str` 以支持 `Deserialize`）
+  - `FeeType`：`Percentage(Decimal)` / `Fixed(Decimal)`，含 `calculate(notional)` 便捷方法
+  - `FeeBreakdown`：`commission` / `brokerage` / `funding` / `total` 四要素，含 `add` / `Add` 操作符
+  - `FeeRecord`：`trade_id` / `instrument_id` / `role` / `fee_breakdown` / `timestamp`
+  - `VolumeTier`：`min_volume` / `maker_fee` / `taker_fee` / `label`
+  - `FeeTable`：`new` / `add_tier` / `with_native_token_discount` / `with_institutional_discount` / `find_tier` / `maker_fee` / `taker_fee`，折扣顺序应用
+  - **默认费率表**：`binance_default()`（5 档 Regular-VIP9） / `coinbase_default()`（4 档 Tier1-Tier4） / `kraken_default()`（3 档 Tier1-Tier4）
+  - `FeeTrade` / `FeePosition`：fee 模块的轻量视图结构（与 `market::Trade` / `portfolio::Position` 解耦）
+  - `FeeModel` trait：`calculate_fee` / `calculate_funding` / `get_tier` / `accumulate`
+  - `TieredFeeModel`：`register_exchange` / `update_volume` / `record` / `exchanges` / `accumulate` / 内部 `HashMap<ExchangeId, FeeTable>`
+  - `FeeModelError`：`ExchangeNotRegistered` / `NoTiersConfigured` / `InvalidRate` / `InvalidQuantity` / `Overflow`
+  - 44 单元测试覆盖（合计 379 个），全部通过
+  - `lib.rs` 顶层 re-export 扩展：新增 13 个 fee 类型
+  - 工作区新增 `rust_decimal_macros = "1.35"` 依赖（axon-core 使用）
+- **Phase 1A P2**：`axon-backtest::matching::l3` 模块（撮合引擎 L3：多资产路由 / 暗池 / 批量拍卖 / 套利）
+  - **位置调整**：原 TDD 规划在 `axon-core`，实际放在 `axon-backtest`（与 L1/L2 同位置，避免跨 crate 依赖）
+  - **类型适配**：`Order` 无 `price` 字段，通过 `order.order_type.limit_price()` 获取；`FillEvent` → `MatchFill`；`timestamp_ns` → `created_at`；`Order::new()` 替代 `Order::new_limit()`
+  - `Venue` 枚举：Binance / Coinbase / Kraken / Bybit / Okx / Huobi / Custom(u16)
+  - `CrossPair`：leg1 / leg2 / ratio / max_quantity（自动校验 leg1 != leg2 与 ratio > 0）
+  - `BatchMode`：Continuous / Auction / DarkPool
+  - `PriceLevel` / `L2Snapshot` / `MatchingEngineSnapshot`：含价格级别与交易对配置的完整快照
+  - `L3Stats`：total_assets / total_cross_fills / total_batch_fills / total_dark_fills / total_arbitrage_profit
+  - `ArbitrageOpportunity`：只读报告（pair / leg1_mid / leg2_mid / implied_ratio / deviation / estimated_profit）
+  - `AuctionResult`：clearing_price / clearing_volume / fills / unfilled_orders
+  - `DarkOrder`：visible_quantity / hidden_quantity / order（`new()` 验证 visible <= hidden）
+  - `MultiAssetMatchingEngine`：
+    - `register_asset` / `register_cross_pair` / `set_batch_mode` / `batch_mode`
+    - `engine` / `engine_mut` / `asset_count` / `cross_pair_count` / `stats`
+    - `submit` / `submit_batch` / `submit_dark_order`（路由到 L2 或暂存）
+    - `run_auction`（按 symbol 执行批量拍卖，drain pending_batch）
+    - `detect_arbitrage` / `execute_arbitrage`（跨资产套利检测与执行）
+    - `snapshot` / `restore`（**仅资产 / 配置 / 批量模式**，价格级别恢复需 L2 `from_entries`）
+  - `find_clearing_price`（独立函数）：累积供需差算法 O(n log n)
+  - `try_dark_match`（独立函数）：软暗池撮合（maker price 成交 + 清理完全成交订单）
+  - `MatchingL3Error`：AssetNotFound / InvalidCrossPair / InvalidDarkOrderQuantity / AuctionNoClearingPrice / SnapshotFailed / RestoreFailed / Matching / OrderMissingLimitPrice
+  - **架构决策**：1 个独立模块 l3（5 个子模块 types / engine_l3 / dark_pool / auction / error），不引入跨 crate 依赖
+  - 41 单元测试覆盖（合计 470 个），全部通过
+  - `axon-backtest::matching::mod.rs` re-export 扩展：新增 13 个 L3 类型
+- **横向任务：边界测试（Boundary Tests）**：覆盖全部核心模块的极端输入 / 状态 / 资源 / 时间边界
+  - `Price` / `Quantity` / `Timestamp`：NaN、±∞、极小 / 极大值、Year 2038、闰秒、负时间戳
+  - `Order` / `OrderBookLevel`：零数量、超量成交、状态机非法转换
+  - `L1MatchingEngine` / `L3 Engine`：空订单簿、同价位 FIFO、10K 订单性能、跨价位撮合
+  - `EventQueue`：Unix 纪元、i64::MAX、seq 排序、大批量事件
+  - **`impact` 模块**（44 个新增测试）：零系数 / 极小正数量 / 负 / 极大中间价、系数越界 panic、序列化往返
+  - **`latency` 模块**（53 个新增测试）：零延迟 / 极大延迟、长尾分布、min>max 回退、嵌套 Composite、路径权重
+  - **`fee` 模块**（71 个新增测试）：零 / 负 / 极小 / 极大费率、100% 折扣、阶梯边界值（阈值-1/阈值/阈值+1）、Fixed/Percentage 混合、Custom 交易所
+  - **`error` 模块**：5 个 FeeModelError variant 序列化、空字符串 payload
+  - `ImpactModel` / `LatencyModel` / `FeeModel` 的 `Send + Sync` 验证
+  - **FeeType 序列化修复**：将 `#[serde(tag = "type")]` 改为 `#[serde(tag = "kind", content = "value")]` 修复 newtype variant + tag 不兼容导致的 `cannot serialize tagged newtype variant` 错误
+  - **Clippy 修复**：`FeeBreakdown::clone` on `Copy` 类型去除 `clone()` / `QueueLatencyModel` 极端断言去除恒真比较 / `BatchMode` 改用 `#[derive(Default)] + #[default]` / `MultiAssetMatchingEngine::register_asset` 改用 `Entry::or_default()` / 清理 `auction.rs` 测试模块未使用的 `Symbol` 导入
+  - **`cargo fmt --all`**：所有代码已格式化
+  - **合计**：602 个单元测试 + 1 文档测试 = 603 个全部通过，`cargo clippy --workspace --all-targets -- -D warnings` 零警告
+- **Phase 1B P0**：`axon-rl` crate（强化学习环境）
+  - **`observation` 模块**：特征工程 + 归一化 + 窗口聚合
+    - `FeatureConfig` / `FeatureSource`（`PriceField` / `VolumeField` / `PositionField` / `TimeField`） + `NormalizerType`（`ZScore` / `MinMax` / `Robust` / `None`）
+    - `RunningStats` / `ZScoreNormalizer` / `MinMaxNormalizer` / `RobustNormalizer` / `NoopNormalizer`
+    - `TickBuffer`（环形缓冲区） + `DefaultObservationSpace`（含 `gymnasium_box` 兼容 Box 空间）
+    - `Observation` / `BoxSpace` / `DType` / `TimeFeature` / `MarketState`
+    - 25 单元测试覆盖边界场景（空特征、零窗口、NaN、归一化边界）
+  - **`action` 模块**：离散 / 连续动作空间
+    - `TradingDirection`（`LongOnly` / `ShortOnly` / `Both`） + `QuantityBin`（仓位分箱）
+    - `DiscreteAction`（`Hold` / `Buy(QuantityBin)` / `Sell(QuantityBin)`） + `DiscreteActionSpace`（含 `index_to_action` / `action_mask`）
+    - `ContinuousActionSpace`（目标仓位 `[-1, 1]`） + `ActionSpace` 枚举
+    - `Action` / `ActionType` + `apply_action_mask`（masked logits 设为 `LARGE_NEG`）
+    - `ActionConverter` trait + `DiscreteActionConverter` / `ContinuousActionConverter` + `Order` / `OrderSide` / `OrderType`
+    - `ActionSmoother`（EMA 平滑 + delta 限制）
+    - `PortfolioState`（cash / position / last_price / portfolio_value / unrealized_pnl）
+    - 73 单元测试覆盖（包含掩码、平滑器、转换器、状态字段）
+  - **`reward` 模块**：奖励函数族
+    - `RewardFn` trait（`calculate` / `name` / `reset`）
+    - `PnLReward`（绝对 / 相对 PnL + scale） + `SharpeReward`（Sharpe / Sortino 风险调整 + clip）
+    - `MultiObjectiveReward`（权重自动归一化 + turnover penalty）
+    - `ScaledReward`（装饰器：缩放 + 裁剪）
+    - `ReturnHistory`（FIFO 环形缓冲 `VecDeque` 实现）
+    - `RewardError` + `to_py_err`（PyO3 异常映射）
+    - `create_reward_fn` / `default_multi_objective` 工厂函数
+    - 33 单元测试覆盖（含 NaN、零方差、风险利率、短历史退化）
+  - **`env` 模块**：交易环境（Gymnasium 兼容）
+    - `EnvConfig`（initial_capital / transaction_cost / slippage / max_position_ratio / max_steps / seed / symbol / return_window）
+    - `EnvError` + `EnvResult`（`EpisodeAlreadyDone` → `PyStopIteration`，其他 → `PyValueError`）
+    - `MarketBar`（OHLCV，含 `typical_price`） + `ExecutionResult` + `EnvInfo`（portfolio_value / trades_executed / transaction_costs / current_step / done / initial_capital）
+    - `ActionDecoder`（统一离散 / 连续动作 → `Order`，含 `from_space` 工厂）
+    - `Executor`（订单执行 + 组合重估，模拟滑点与手续费）
+    - `TradingEnv`（Gymnasium 风格 `reset` / `step` / `render`） + `StepResult`
+    - 8 单元测试覆盖（空数据、Hold、Buy、max_steps、episode 终止、LongOnly/ShortOnly 方向）
+  - **`python` 模块**：PyO3 绑定（feature = `python`）
+    - `PyTradingEnv`（`#[pyclass(name = "TradingEnv")]`） + `#[pymethods]`（`new` / `reset` / `step` / `render` / `close` + `current_step` / `done` / `portfolio_value` / `info` getters + `__repr__`）
+    - `parse_config`（Python dict → `EnvConfig`） / `parse_action`（int / list → `Action`） / `parse_action_space`（"discrete" / "continuous" → `ActionSpace`） / `parse_market_data`（list[dict] → `Vec<MarketBar>`）
+    - `env_info_to_dict`（`EnvInfo` → Python dict） / `env_error_to_py`（`EnvError` → Python 异常映射）
+    - `axon_rl` `#[pymodule]` 入口（暴露 `TradingEnv` + `VERSION` 常量）
+    - **18 单元测试**覆盖：默认值覆盖、未知键忽略、类型错误、离散/连续动作、动作空间、长/空仓方向、OHLCV 解析、Python 异常类型验证
+    - **PyO3 0.22 兼容**：使用 `PyDict::new_bound` / `PyTuple::new_bound` / `into_py` Bound API；`unsafe_op_in_unsafe_fn` + `useless_conversion` lint 抑制（pyo3 0.23+ 可移除）
+    - **Gymnasium 5 元组 API**：`step` 返回 `(observation, reward, terminated, truncated, info)`
+  - **`axon-rl` 集成**：所有公开类型在 `lib.rs` 顶层 re-export；`Cargo.toml` 新增 `axon-core` / `axon-backtest` / `serde` / `serde_json` / `thiserror` / `tracing` 依赖 + `pyo3 = "0.22"` 可选依赖 + `python` feature
+  - **合计**：157 个 axon-rl 单元测试（其中 18 个需要 `--features python`）+ 1 文档测试，全部通过
 
 ### Changed
 

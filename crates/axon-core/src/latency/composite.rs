@@ -159,4 +159,149 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<CompositeLatencyModel>();
     }
+
+    // ─── 边界测试 ──────────────────────────────────────────
+
+    /// 零延迟 default + 零延迟 path ⇒ 全部返回 0
+    #[test]
+    fn test_all_zero_delays() {
+        let composite =
+            CompositeLatencyModel::new(Box::new(ConstantLatencyModel::uniform(Duration::ZERO)))
+                .with_path(
+                    PathType::OrderSubmit,
+                    Box::new(ConstantLatencyModel::uniform(Duration::ZERO)),
+                );
+
+        for path in PathType::ALL {
+            assert_eq!(composite.sample_delay(path), Duration::ZERO);
+        }
+    }
+
+    /// 全部 5 个路径都使用不同子模型
+    #[test]
+    fn test_all_paths_overridden() {
+        let composite = CompositeLatencyModel::new(Box::new(ConstantLatencyModel::uniform(
+            Duration::from_millis(1),
+        )))
+        .with_path(
+            PathType::MarketData,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(2))),
+        )
+        .with_path(
+            PathType::OrderSubmit,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(3))),
+        )
+        .with_path(
+            PathType::OrderCancel,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(4))),
+        )
+        .with_path(
+            PathType::AccountQuery,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(5))),
+        )
+        .with_path(
+            PathType::Heartbeat,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(6))),
+        );
+
+        assert_eq!(
+            composite.sample_delay(PathType::MarketData),
+            Duration::from_millis(2)
+        );
+        assert_eq!(
+            composite.sample_delay(PathType::OrderSubmit),
+            Duration::from_millis(3)
+        );
+        assert_eq!(
+            composite.sample_delay(PathType::OrderCancel),
+            Duration::from_millis(4)
+        );
+        assert_eq!(
+            composite.sample_delay(PathType::AccountQuery),
+            Duration::from_millis(5)
+        );
+        assert_eq!(
+            composite.sample_delay(PathType::Heartbeat),
+            Duration::from_millis(6)
+        );
+        assert_eq!(composite.path_count(), 5);
+    }
+
+    /// 同一路径多次 with_path ⇒ 后者覆盖前者
+    #[test]
+    fn test_path_override_chain() {
+        let composite = CompositeLatencyModel::new(Box::new(ConstantLatencyModel::uniform(
+            Duration::from_millis(1),
+        )))
+        .with_path(
+            PathType::OrderSubmit,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(10))),
+        )
+        .with_path(
+            PathType::OrderSubmit,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(20))),
+        );
+
+        // 后者覆盖
+        assert_eq!(
+            composite.sample_delay(PathType::OrderSubmit),
+            Duration::from_millis(20)
+        );
+        // path_count 仍为 1（同一 key）
+        assert_eq!(composite.path_count(), 1);
+    }
+
+    /// 嵌套：Composite 作为 default
+    #[test]
+    fn test_nested_composite() {
+        let inner = CompositeLatencyModel::new(Box::new(ConstantLatencyModel::uniform(
+            Duration::from_millis(1),
+        )))
+        .with_path(
+            PathType::MarketData,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(5))),
+        );
+
+        let outer = CompositeLatencyModel::new(Box::new(inner)).with_path(
+            PathType::OrderSubmit,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(50))),
+        );
+
+        // MarketData 应回退到 inner（再回退到 inner.default = 1ms...不对）
+        // outer 没有 MarketData ⇒ 回退到 inner ⇒ inner 有 MarketData = 5ms
+        assert_eq!(
+            outer.sample_delay(PathType::MarketData),
+            Duration::from_millis(5)
+        );
+        assert_eq!(
+            outer.sample_delay(PathType::OrderSubmit),
+            Duration::from_millis(50)
+        );
+    }
+
+    /// path_count 初始为 0
+    #[test]
+    fn test_path_count_zero_initially() {
+        let c = CompositeLatencyModel::new(Box::new(ConstantLatencyModel::uniform(
+            Duration::from_millis(1),
+        )));
+        assert_eq!(c.path_count(), 0);
+    }
+
+    /// Debug 输出包含 default 和 paths
+    #[test]
+    fn test_debug_contains_default_and_paths() {
+        let c = CompositeLatencyModel::new(Box::new(ConstantLatencyModel::uniform(
+            Duration::from_millis(1),
+        )))
+        .with_path(
+            PathType::OrderSubmit,
+            Box::new(ConstantLatencyModel::uniform(Duration::from_millis(10))),
+        );
+        let s = format!("{c:?}");
+        assert!(s.contains("CompositeLatencyModel"));
+        assert!(s.contains("default"));
+        assert!(s.contains("paths"));
+        assert!(s.contains("constant"));
+    }
 }

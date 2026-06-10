@@ -50,15 +50,11 @@ impl LatencyModelFactory {
     }
 
     /// 常见组合：行情低延迟固定，订单指数分布
-    pub fn realistic_combo(
-        market_data_ms: f64,
-        order_mean_ms: f64,
-    ) -> CompositeLatencyModel {
-        CompositeLatencyModel::new(Box::new(Self::constant(market_data_ms)))
-            .with_path(
-                super::traits::PathType::OrderSubmit,
-                Box::new(Self::exponential(order_mean_ms)),
-            )
+    pub fn realistic_combo(market_data_ms: f64, order_mean_ms: f64) -> CompositeLatencyModel {
+        CompositeLatencyModel::new(Box::new(Self::constant(market_data_ms))).with_path(
+            super::traits::PathType::OrderSubmit,
+            Box::new(Self::exponential(order_mean_ms)),
+        )
     }
 }
 
@@ -70,7 +66,10 @@ mod tests {
     #[test]
     fn test_factory_constant() {
         let m = LatencyModelFactory::constant(5.0);
-        assert_eq!(m.sample_delay(PathType::MarketData), Duration::from_millis(5));
+        assert_eq!(
+            m.sample_delay(PathType::MarketData),
+            Duration::from_millis(5)
+        );
     }
 
     #[test]
@@ -127,5 +126,102 @@ mod tests {
             .sum();
         let mean = sum / n as f64;
         assert!((mean - 8.0).abs() < 2.0, "mean = {mean}");
+    }
+
+    // ─── 边界测试 ──────────────────────────────────────────
+
+    /// 零延迟 constant
+    #[test]
+    fn test_factory_constant_zero() {
+        let m = LatencyModelFactory::constant(0.0);
+        assert_eq!(
+            m.sample_delay(PathType::MarketData),
+            Duration::from_millis(0)
+        );
+    }
+
+    /// 负延迟 constant ⇒ Duration::from_secs_f64 会 panic（已知行为）
+    #[test]
+    #[should_panic(expected = "value is negative")]
+    fn test_factory_constant_negative_panics() {
+        // Duration::from_secs_f64 不接受负值，这是设计决策
+        let _ = LatencyModelFactory::constant(-1.0);
+    }
+
+    /// 极大延迟 constant
+    #[test]
+    fn test_factory_constant_extreme() {
+        let m = LatencyModelFactory::constant(60_000.0); // 60 秒
+        assert_eq!(
+            m.sample_delay(PathType::MarketData),
+            Duration::from_secs(60)
+        );
+    }
+
+    /// 零 mean + 零 std_dev normal
+    #[test]
+    fn test_factory_normal_zero_values() {
+        let m = LatencyModelFactory::normal(0.0, 0.0);
+        for _ in 0..100 {
+            assert_eq!(m.sample_delay(PathType::MarketData), Duration::ZERO);
+        }
+    }
+
+    /// 零 mean_ms exponential
+    #[test]
+    fn test_factory_exponential_zero_mean() {
+        let m = LatencyModelFactory::exponential(0.0);
+        // mean=0 ⇒ rate=1 ⇒ 实际 1s 延迟
+        let d = m.sample_delay(PathType::MarketData);
+        assert!(d.as_secs_f64() >= 0.0);
+    }
+
+    /// 极小延迟 uniform
+    #[test]
+    fn test_factory_uniform_tiny_range() {
+        let m = LatencyModelFactory::uniform(0.001, 0.002);
+        for _ in 0..100 {
+            let d = m.sample_delay(PathType::MarketData);
+            // 1-2 µs
+            assert!(d <= Duration::from_micros(2));
+        }
+    }
+
+    /// min > max uniform
+    #[test]
+    fn test_factory_uniform_min_greater_than_max() {
+        let m = LatencyModelFactory::uniform(10.0, 5.0);
+        // max <= min ⇒ sample 返回 min = 10ms
+        for _ in 0..100 {
+            assert_eq!(
+                m.sample_delay(PathType::MarketData),
+                Duration::from_millis(10)
+            );
+        }
+    }
+
+    /// 零 base_delay queue
+    #[test]
+    fn test_factory_queue_zero_base() {
+        let m = LatencyModelFactory::queue(0.0, 5.0);
+        // base=0, queue=0 ⇒ 0
+        assert_eq!(
+            m.sample_delay(PathType::OrderSubmit),
+            Duration::from_millis(0)
+        );
+    }
+
+    /// 零参数 realistic_combo
+    #[test]
+    fn test_factory_realistic_combo_all_zero() {
+        let m = LatencyModelFactory::realistic_combo(0.0, 0.0);
+        // 行情 = 0
+        assert_eq!(
+            m.sample_delay(PathType::MarketData),
+            Duration::from_millis(0)
+        );
+        // 订单 = 指数 rate=1 ⇒ mean=1s
+        let d = m.sample_delay(PathType::OrderSubmit);
+        assert!(d.as_secs_f64() >= 0.0);
     }
 }

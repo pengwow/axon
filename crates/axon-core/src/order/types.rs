@@ -110,19 +110,25 @@ mod tests {
     #[test]
     fn test_order_type_requires_price() {
         assert!(!OrderType::Market.requires_price());
-        assert!(OrderType::Limit {
-            price: Price::from_f64(100.0)
-        }
-        .requires_price());
-        assert!(OrderType::StopLimit {
-            trigger: Price::from_f64(101.0),
-            price: Price::from_f64(100.0),
-        }
-        .requires_price());
-        assert!(!OrderType::Stop {
-            trigger: Price::from_f64(101.0)
-        }
-        .requires_price());
+        assert!(
+            OrderType::Limit {
+                price: Price::from_f64(100.0)
+            }
+            .requires_price()
+        );
+        assert!(
+            OrderType::StopLimit {
+                trigger: Price::from_f64(101.0),
+                price: Price::from_f64(100.0),
+            }
+            .requires_price()
+        );
+        assert!(
+            !OrderType::Stop {
+                trigger: Price::from_f64(101.0)
+            }
+            .requires_price()
+        );
     }
 
     #[test]
@@ -138,15 +144,19 @@ mod tests {
     #[test]
     fn test_order_type_is_conditional() {
         assert!(!OrderType::Market.is_conditional());
-        assert!(OrderType::Stop {
-            trigger: Price::from_f64(100.0)
-        }
-        .is_conditional());
-        assert!(OrderType::StopLimit {
-            trigger: Price::from_f64(100.0),
-            price: Price::from_f64(101.0),
-        }
-        .is_conditional());
+        assert!(
+            OrderType::Stop {
+                trigger: Price::from_f64(100.0)
+            }
+            .is_conditional()
+        );
+        assert!(
+            OrderType::StopLimit {
+                trigger: Price::from_f64(100.0),
+                price: Price::from_f64(101.0),
+            }
+            .is_conditional()
+        );
     }
 
     #[test]
