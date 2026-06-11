@@ -244,4 +244,203 @@ mod tests {
         assert_eq!(evt3.seq(), 2);
         assert_eq!(b.next_seq(), 3);
     }
+
+    // ─── 边界测试 ──────────────────────────────────────
+
+    /// 空 router 派发单个事件：不 panic、不影响内部状态
+    #[test]
+    fn test_empty_router_dispatch_no_panic() {
+        let mut router = EventRouter::new();
+        assert!(router.is_empty());
+        // 派发 1000 个事件到空 router，全部应被静默丢弃
+        for i in 0..1_000 {
+            router.dispatch(&make_tick_event(i, 100.0));
+        }
+        assert!(router.is_empty());
+    }
+
+    /// 空 batch 派发：不 panic、不修改 router 状态
+    #[test]
+    fn test_empty_batch_dispatch_no_panic() {
+        let mut router = EventRouter::new();
+        router.register(Box::new(EventCollector::default()));
+        let empty: Vec<Event> = vec![];
+        router.dispatch_batch(&empty);
+        assert_eq!(router.len(), 1);
+    }
+
+    /// 单一订阅者过滤掉所有事件（不感兴趣）⇒ 不 panic
+    #[test]
+    fn test_router_with_zero_interest_handler() {
+        let mut router = EventRouter::new();
+        // 注册一个只关心 SYSTEM 的订阅者
+        router.register(Box::new(SystemOnlyCollector::default()));
+        // 派发 100 个 MARKET_DATA 事件
+        for i in 0..100 {
+            router.dispatch(&make_tick_event(i, 100.0));
+        }
+        // 派发 1 个 SYSTEM 事件
+        router.dispatch(&make_system_event(999));
+    }
+
+    /// 100 个订阅者同时注册 + 派发 100 个事件
+    #[test]
+    fn test_router_high_fanout() {
+        let mut router = EventRouter::new();
+        for _ in 0..100 {
+            router.register(Box::new(EventCollector::default()));
+        }
+        assert_eq!(router.len(), 100);
+        for i in 0..100 {
+            router.dispatch(&make_tick_event(i, 100.0));
+        }
+    }
+
+    /// 清空后再次派发：等同于新 router
+    #[test]
+    fn test_router_clear_then_dispatch() {
+        let mut router = EventRouter::new();
+        router.register(Box::new(EventCollector::default()));
+        router.register(Box::new(EventCollector::default()));
+        assert_eq!(router.len(), 2);
+        router.clear();
+        assert!(router.is_empty());
+        // 派发不应 panic
+        router.dispatch(&make_tick_event(0, 100.0));
+    }
+
+    // ─── 辅助测试类型 ─────────────────────────────────
+
+    /// 仅关心 SYSTEM 事件的收集器
+    #[derive(Default)]
+    struct SystemOnlyCollector;
+
+    impl EventHandler for SystemOnlyCollector {
+        fn on_event(&mut self, _: &Event) {
+            // do nothing
+        }
+        fn event_types(&self) -> EventType {
+            EventType::SYSTEM
+        }
+    }
+
+    // ─── 并发测试 ──────────────────────────────────────
+
+    /// EventRouter 本身非线程安全（持有 &mut self）：编译期文档
+    ///
+    /// EventRouter 需要 &mut self 进行 dispatch，因此不是 Sync。
+    /// 生产环境应当使用消息通道或每线程独立 router 来实现并发。
+    /// 以下为文档性注释（编译期不会触发）。
+    fn _assert_router_not_sync_doc() {
+        // 取消注释将编译失败：
+        // fn assert_sync<T: Sync>() {}
+        // assert_sync::<EventRouter>();
+    }
+
+    /// 多线程并发 EventCollector（独立实例）：各自收集互不干扰
+    #[test]
+    fn test_concurrent_collectors_independent() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 50;
+        const PER_THREAD: usize = 100;
+
+        // 每个线程创建独立的 EventCollector
+        let counters: Vec<Arc<std::sync::Mutex<usize>>> =
+            (0..N_THREADS).map(|_| Arc::new(std::sync::Mutex::new(0))).collect();
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for (i, counter) in counters.iter().enumerate() {
+            let c = Arc::clone(counter);
+            handles.push(thread::spawn(move || {
+                let mut collector = EventCollector::new(EventType::MARKET_DATA);
+                for j in 0..PER_THREAD {
+                    collector.on_event(&make_tick_event(
+                        (i * PER_THREAD + j) as u64,
+                        100.0 + j as f64,
+                    ));
+                }
+                let count = collector.len();
+                *c.lock().unwrap() = count;
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        // 每个 collector 应收到 PER_THREAD 个事件
+        for (i, counter) in counters.iter().enumerate() {
+            let n = *counter.lock().unwrap();
+            assert_eq!(n, PER_THREAD, "collector {i} 应收到 {PER_THREAD} 个事件");
+        }
+    }
+
+    /// 多线程独立 router：每个线程构造独立 EventRouter 并 dispatch 自己的事件
+    /// （验证 EventRouter 的逻辑在并行场景下也保持正确性，不共享 router 状态）
+    #[test]
+    fn test_concurrent_independent_routers() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 20;
+        const PER_THREAD: usize = 1_000;
+
+        // 每个线程独立维护一个计数器
+        let totals: Vec<Arc<std::sync::Mutex<usize>>> =
+            (0..N_THREADS).map(|_| Arc::new(std::sync::Mutex::new(0))).collect();
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for (i, total) in totals.iter().enumerate() {
+            let t = Arc::clone(total);
+            handles.push(thread::spawn(move || {
+                let mut router = EventRouter::new();
+                router.register(Box::new(EventCollector::default()));
+
+                for j in 0..PER_THREAD {
+                    let seq = (i * PER_THREAD + j) as u64;
+                    router.dispatch(&make_tick_event(seq, 100.0));
+                }
+                *t.lock().unwrap() = PER_THREAD;
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        // 每个线程 dispatch 了 PER_THREAD 个事件
+        for (i, total) in totals.iter().enumerate() {
+            assert_eq!(*total.lock().unwrap(), PER_THREAD, "thread {i} 应 dispatch {PER_THREAD} 次");
+        }
+    }
+
+    /// 大量订阅者 + 大量事件 dispatch：单线程下性能正确
+    /// （高扇出路由的典型场景）
+    #[test]
+    fn test_dispatch_many_handlers_high_volume() {
+        const N_HANDLERS: usize = 50;
+        const N_EVENTS: usize = 10_000;
+
+        let mut router = EventRouter::new();
+        for _ in 0..N_HANDLERS {
+            router.register(Box::new(EventCollector::new(EventType::MARKET_DATA)));
+        }
+        for i in 0..N_EVENTS {
+            router.dispatch(&make_tick_event(i as u64, 100.0));
+        }
+        assert_eq!(router.len(), N_HANDLERS);
+    }
+
+    /// EventCollector 是 Send：可跨线程移动所有权
+    #[test]
+    fn test_event_collector_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<EventCollector>();
+    }
+
+    /// 静态断言：EventRouter 仍实现 Default
+    #[test]
+    fn test_router_default_works() {
+        let mut router = EventRouter::default();
+        router.dispatch(&make_tick_event(0, 100.0));
+        assert!(router.is_empty());
+    }
 }

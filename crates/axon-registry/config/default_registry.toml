@@ -1,0 +1,14 @@
+# AXON 模型注册表默认配置
+
+[storage]
+type = "local"
+base_dir = "./models"
+
+[stages]
+# 允许的阶段转换
+staging_to_production = true
+staging_to_archived = true
+production_to_archived = true
+production_to_rolled_back = true
+archived_to_staging = true
+archived_to_production = true  # 回滚场景

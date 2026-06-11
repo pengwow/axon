@@ -131,4 +131,67 @@ mod tests {
             super::super::types::EventType::SYSTEM
         );
     }
+
+    // ─── 边界测试 ──────────────────────────────────────
+
+    /// 从接近 `u64::MAX` 启动：达到 `u64::MAX` 边界附近能正常分配
+    /// （连续分配超过 `u64::MAX` 个事件会触发 overflow；这是当前实现的设计，
+    /// 生产环境应避免在长生命周期进程中无限制构造事件）
+    #[test]
+    fn test_builder_start_at_max_seq_saturates() {
+        // 从 u64::MAX - 1 启动：单次分配能正常使用 u64::MAX - 1
+        let mut b = EventBuilder::new(u64::MAX - 1);
+        let ts = Timestamp::from_nanos(0);
+        let evt = b.system(ts, SystemAction::Heartbeat);
+        assert_eq!(evt.seq(), u64::MAX - 1);
+        // current_seq 仍可正确读取最近一次分配的 seq
+        assert_eq!(b.current_seq(), u64::MAX - 1);
+    }
+
+    /// 从 `u64::MAX` 启动会触发溢出 panic（已知设计约束）
+    ///
+    /// 当前实现 `next_seq += 1` 在 debug 模式下会因加法溢出而 panic。
+    /// 这是有意的"硬停止"行为，迫使上游在接近 seq 极限时主动重置
+    /// （生产环境应监控 next_seq 接近 u64::MAX 时切换到新的 EventBuilder）。
+    #[test]
+    #[should_panic(expected = "attempt to add with overflow")]
+    fn test_builder_start_at_max_seq_panics_on_overflow() {
+        let mut b = EventBuilder::new(u64::MAX);
+        let ts = Timestamp::from_nanos(0);
+        let _ = b.system(ts, SystemAction::Heartbeat);
+    }
+
+    /// current_seq 在未分配时回退为 0（saturating_sub 防下溢）
+    #[test]
+    fn test_builder_current_seq_saturates_at_zero() {
+        let b = EventBuilder::new(0);
+        // 尚未分配任何 seq ⇒ current_seq = 0（不会下溢到 u64::MAX）
+        assert_eq!(b.current_seq(), 0);
+    }
+
+    /// 大量连续构造（10 万）⇒ seq 严格单调
+    #[test]
+    fn test_builder_high_volume_monotonic() {
+        let mut b = EventBuilder::new(0);
+        let ts = Timestamp::from_nanos(0);
+        // 首次分配 seq = 0 ⇒ 先记录 prev，从第二次开始检查严格递增
+        let evt0 = b.system(ts, SystemAction::Heartbeat);
+        let mut prev = evt0.seq();
+        for _ in 1..100_000 {
+            let evt = b.system(ts, SystemAction::Heartbeat);
+            assert!(evt.seq() > prev, "seq 必须严格递增");
+            prev = evt.seq();
+        }
+        assert_eq!(b.next_seq(), 100_000);
+    }
+
+    /// 自定义起始 seq：跳过前 N 个位置
+    #[test]
+    fn test_builder_start_at_arbitrary_seq() {
+        let mut b = EventBuilder::new(1_000_000);
+        let ts = Timestamp::from_nanos(0);
+        let evt = b.system(ts, SystemAction::Heartbeat);
+        assert_eq!(evt.seq(), 1_000_000);
+        assert_eq!(b.next_seq(), 1_000_001);
+    }
 }

@@ -15,8 +15,9 @@
 //! | [`queue`] | Phase 1A | 事件队列（按时间戳排序/快进/暂停/重放） |
 //! | [`portfolio`] | Phase 1A | 投资组合（多币种/多资产/盈亏/净值） |
 //! | [`scheduler`] | Phase 1A | 调度器（模拟时钟/定时任务/周期任务/事件循环） |
-//! | [`impact`] | Phase 1A P2 | 市场冲击模型（线性/幂律/自适应） |
+//! | [`impact`] | Phase 1A P2 | 市场冲击模型（线性/幂律/自适应/Almgren-Chriss） |
 //! | [`latency`] | Phase 1A P2 | 延迟模型（固定/正态/指数/均匀/队列/组合） |
+//! | [`volatility`] | Phase 3 | 历史波动率估计器（EWMA/滚动/Garman-Klass） |
 //! | [`error`] | Phase 0+ | 统一错误类型 |
 //!
 //! # 设计原则
@@ -41,6 +42,7 @@ pub mod queue;
 pub mod scheduler;
 pub mod time;
 pub mod types;
+pub mod volatility;
 
 pub use error::{Error, Result};
 
@@ -86,9 +88,9 @@ pub use scheduler::{
 
 // 冲击模型 re-export
 pub use impact::{
-    AdaptiveImpactModel, Impact, ImpactModel, ImpactModelConfig, ImpactModelError,
-    ImpactModelResult, LinearImpactModel, PowerLawImpactModel, create_model, linear_impact,
-    sqrt_impact,
+    AdaptiveImpactModel, AlmgrenChrissModel, ExecutionPlan, ExecutionStep, Impact, ImpactModel,
+    ImpactModelConfig, ImpactModelError, ImpactModelResult, LinearImpactModel, PowerLawImpactModel,
+    create_model, linear_impact, sqrt_impact,
 };
 
 // 延迟模型 re-export
@@ -102,4 +104,10 @@ pub use latency::{
 pub use fee::{
     ExchangeId, FeeBreakdown, FeeModel, FeeModelError, FeeModelResult, FeePosition, FeeRecord,
     FeeTable, FeeTrade, FeeType, TieredFeeModel, TradeRole, VolumeTier,
+};
+
+// 波动率估计器 re-export
+pub use volatility::{
+    EwmaVolatility, GarmanKlassVolatility, OhlcBar, RollingVolatility, VolatilityError,
+    VolatilityEstimator, VolatilityResult, VolatilitySource,
 };

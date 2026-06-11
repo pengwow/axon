@@ -1,0 +1,39 @@
+[package]
+name = "axon-registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON 模型注册表：版本管理 + 阶段生命周期 + 多后端存储 + 元数据签名（Phase 2 P4 阶段填充）"
+
+[features]
+default = []
+# PyO3 绑定
+python = ["dep:pyo3"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+# Python 绑定
+pyo3 = { version = "0.28", optional = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }
+tempfile = { workspace = true }
+
+[lib]
+crate-type = ["rlib", "cdylib"]

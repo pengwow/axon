@@ -379,6 +379,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - **RLLib 2.x builder API**：使用新版 `PPOConfig().environment().framework().resources().env_runners().training().model()` 链式构造
     - **TOML + dataclass 镜像**：Rust `DistributedConfig` 与 Python `RLLibTrainConfig` 字段名一致，便于 Rust↔Python 互操作
     - **mock 模式（CI 友好）**：`RAY_AVAILABLE=False` 时所有 Actor 退化为本地类，`init_ray=False` 时跳过 `ray.init()`，无 ray 依赖即可运行所有示例 + 测试
+- **Phase 2 P3**：`axon-tracker` crate（统一实验追踪：4 个后端 + 指标缓冲 + 重试策略 + PyO3 桥接）
+  - **`types` 模块**：11 个核心数据类型
+    - `ExperimentId` / `RunId`（带 `Hash` + `Eq` 的 NewType）
+    - `ImageFormat`（Png / Jpeg / Svg）
+    - `MetricValue`（Scalar / Histogram{values,bins} / Image{data,format,width,height} / Table{columns,rows}）
+    - `ParamValue`（Int / Float / String / Bool / List + `Display` 实现）
+    - `MetricEntry`（key / value / step / timestamp）
+    - `RunStatus`（Running / Completed / Failed / Killed + `as_mlflow_str()` 状态字符串映射）
+    - `ExperimentConfig`（hyperparameters / git_commit / dataset_hash / seed / start_time / tags + `#[serde(default)]`）
+    - `ArtifactInfo`（name / path / size_bytes / content_hash / timestamp）
+    - `RunContext`（run_id / experiment_id / config / status / start_time / end_time / metrics / artifacts）
+  - **`config` 模块**：`TrackerBackend`（Mlflow / Wandb / Local / Memory，serde tag + rename_all lowercase）+ `MetricBuffer`（capacity / flush_interval / push / should_flush / drain / mark_flushed，capacity-满 或 间隔到达 触发刷新）
+  - **`error` 模块**：`TrackerError`（Network / Io / Parse / Auth / RateLimited / ExperimentNotFound / RunNotFound / ArtifactTooLarge{size,limit} / Config / Serialization）+ `is_retryable()` 标识可重试错误 + `TrackerResult<T>` 类型别名
+  - **`retry` 模块**：`RetryPolicy`（max_retries / base_delay / max_delay / backoff_factor）+ `execute()` 同步执行 + 指数退避 + max_delay 上限；非 `is_retryable()` 错误直接返回不重试
+  - **`tracker` 模块**：`ExperimentTracker` trait（9 个方法：log_param / log_params / log_metric / log_histogram / log_image / log_artifact / set_tag / finish / flush）+ `ExperimentTrackerExt` 扩展 trait 批量记录指标
+  - **`backends` 模块**：4 个后端
+    - `MemoryTracker`（Mutex 保护内部状态，提供 get_metrics / get_metrics_by_key / get_param / get_all_params / get_status / run_id 查询接口）
+    - `LocalTracker`（写入 `params.json` / `metrics.jsonl` / `tags.json` / `status.json` / `images/` / `artifacts/` 文件，支持 buffer + flush 批量持久化）
+    - `MlflowTracker`（`feature = "http"` 启用，reqwest 阻塞客户端 + MLflow REST API：experiments/search / create / runs/create / log-parameter / log-batch / log-image / log-artifact / set-tag / update）
+    - `WandbTracker`（`feature = "http"` 启用，reqwest + base64 + GraphQL API：CreateRun / logArtifacts / logMedia / logMetrics / updateRun）
+  - **`python` 模块**：PyO3 桥接层（`feature = "python"` 启用）
+    - `PyMemoryTracker` / `PyLocalTracker`（`#[pyclass]` + `#[pymethods]`）支持 `log_param` / `log_metric` / `set_tag` / `finish` / `flush` / `get_metrics` / `__repr__`
+    - `python_to_param_value`：自动类型推断（bool → int → float → str）
+    - `register_module`：暴露 2 个 pyclass + 1 个 pyfunction + `__version__` 常量
+  - **Python 端 `axon_tracker` 包**：4 个子模块（纯 Python 实现，CI 无外部依赖）
+    - `types.py`：`RunStatus` / `ImageFormat` / `ParamValueType` 枚举 + `TrackerConfig` dataclass（8 字段 + `_load_default_toml()` 加载 Rust 端 TOML）
+    - `memory.py`：`MetricEntry` dataclass + `MemoryTracker` 类（run_id 自动时间戳生成 + 6 个查询方法）
+    - `local.py`：`LocalTracker(MemoryTracker)`（写入 `params.json` / `metrics.jsonl` / `status.json` + flush 批量 + images / artifacts 子目录）
+    - `composite.py`：`MultiTracker`（fan-out 写入多个 backend + 优雅 flush）
+  - **TOML 配置文件**：`config/default_tracker.toml`（backend=memory + capacity=1000 + flush_interval_s=30 + retry 3/100ms/10s/2.0）
+  - **示例脚本**：
+    - `examples/tracker_basic.py`：Memory + Local Tracker 演示（参数/指标/标签/finish + 文件验证）
+    - `examples/tracker_multi_backend.py`：MultiTracker 多后端并行（3 trackers 同步 5 个 epoch × 2 指标）
+  - **代码质量**：
+    - **24 单元测试**全部通过（types 5 + config 6 + retry 3 + memory 5 + local 3 + tracker 2）
+    - `cargo test -p axon-tracker` 全绿
+    - `cargo build -p axon-tracker --features http` 编译通过
+    - `cargo build -p axon-tracker --features python` 编译通过
+    - `cargo clippy -p axon-tracker --all-targets -- -D warnings` 零警告
+    - `cargo test --workspace --no-run` 全量编译通过
+    - 两个 Python 示例均输出 `=== ALL PASS ===`
+  - **架构决策**：
+    - **统一 trait + 多后端**：`ExperimentTracker` 提供 9 个方法的稳定接口，4 个后端各自实现，避免业务代码与具体后端耦合
+    - **指标缓冲 + 自动刷新**：`MetricBuffer` 减少高频指标的网络/IO 开销，capacity 满或 interval 到达时自动 flush
+    - **同步 + 异步兼容**：Trait 同步方法 + MLflow/WandB 内部用 `reqwest::blocking`，避免强制依赖 tokio runtime；后续可平滑迁移到 async
+    - **Feature 隔离**：`http` / `python` 都是 optional feature，不启用时编译零开销；CI 友好
+    - **Python 纯实现**：MemoryTracker / LocalTracker / MultiTracker 都有纯 Python 版本（不依赖 Rust 编译产物），保证 CI / 离线环境可用
+    - **Content Hash 简化**：用 `format!("{size:x}")` 作为文件 hash 占位（避免 SHA256 计算开销），未来用 `sha2` crate 升级
+- **Phase 2 P4**：`axon-registry` crate（统一模型注册表：版本管理 + 阶段生命周期 + 本地存储 + 元数据签名 + PyO3 桥接）
+  - **`types` 模块**：11 个核心数据类型
+    - `SemVer`（major/minor/patch + `bump_patch/minor/major` 三个递增方法 + `parse("1.2.3")` 解析 + Display + `PartialOrd` 全序）
+    - `ModelStage`（Staging/Production/Archived/RolledBack 4 态 + Display + `rename_all = "snake_case"`）
+    - `DataType`（Float32/Float64/Int32/Int64/Bool/String + Display）
+    - `SignatureField`（name/dtype/shape/description + `new`/`with_description` 构造器）
+    - `ModelSignature`（inputs/outputs 两个 `Vec<SignatureField>`）
+    - `ModelMetadata`（description/hyperparameters/metrics/dataset_hash/git_commit/training_duration_secs/created_at/author/tags + 9 字段 + `#[serde(default)]`）
+    - `ModelVersion`（name/version/stage/metadata/signature/storage_uri/artifact_size_bytes/artifact_hash 8 字段）
+    - `StorageBackend` enum（`tag = "type"` + `rename_all = "snake_case"`，本期仅 Local 变体）
+    - `UploadResult`（key/size_bytes/content_hash）
+    - `StorageObject`（key/size_bytes/last_modified）
+    - 10 个类型测试 + 2 个 SemVer 解析测试 = 12 个
+  - **`error` 模块**：`RegistryError`（12 变体：ModelNotFound / VersionNotFound / NoProductionVersion / InvalidVersion / InvalidTransition{from,to} / StorageError / ArtifactNotFound / ConfigError / RollbackFailed / IndexCorrupted / Io / Serialization）+ `is_retryable()` 标识可重试错误 + `RegistryResult<T>` 类型别名
+  - **`filter` 模块**：`VersionFilter`（stage/tags/min_version/max_version/limit 5 字段 + 5 个 `with_*` 链式构造器）
+  - **`signature` 模块**：`DataType` + `SignatureField` + `ModelSignature` + 3 个测试（Display / builder / serialize roundtrip）
+  - **`storage` 模块**：
+    - `StorageBackendTrait`（async_trait，5 个方法 + `as_any()` 用于 downcast）+ `LocalStorage`（4 个测试：upload+download / list / exists+delete / SHA256 一致性）
+    - **SHA-256 真实计算**（用 `sha2` crate），与 axon-tracker 的 `format!("{size:x}")` 占位 hash 区分
+    - **tokio::task::spawn_blocking**：将阻塞 IO 包装为异步任务，避免阻塞 runtime
+  - **`registry` 模块**：`ModelRegistry` 核心（DashMap 并发索引 + 阶段转换 + 回滚 + 持久化）
+    - **6 个核心方法**：`register` / `get` / `get_production` / `list_versions` / `transition_stage` / `rollback` / `download_artifact` / `list_models`
+    - **自动阶段管理**：提升新版本到 Production 时，自动将当前 Production 降级为 Archived
+    - **回滚场景支持**：`Archived -> Production` 是合法转换（rollback 专用路径）
+    - **persist_index**：每次 register/transition_stage 后同步写入 `<base>/<name>/registry.json`
+    - **8 个测试**：register_first_version / register_increments_patch / promote_to_production_archives_previous / rollback_to_archived / invalid_stage_transition / list_versions_filtered / get_latest_version / download_artifact
+  - **`python` 模块**：PyO3 桥接层（`feature = "python"` 启用）
+    - `PyLocalStorage`（`#[pyclass]` + `#[pymethods]`）支持 `base_dir` / `__repr__`
+    - `PyModelRegistry`（含内部 tokio runtime + block_on）支持 `register` / `promote_to_production` / `get_production` / `list_models` / `__repr__`
+    - `model_version_to_dict`：ModelVersion → PyDict（7 字段）
+    - **pyo3 0.28 兼容**：用 `PyDict::new(py)`（已移除 `_bound` 后缀）
+  - **Python 端 `axon_registry` 包**：3 个子模块（纯 Python 实现，CI 无外部依赖）
+    - `types.py`：`ModelStage` 枚举 + `SemVer` dataclass（含 `__lt__` / `__eq__` / `__hash__` 全套比较）+ `ModelMetadata` + `ModelVersion`（4 个 SemVer 比较运算符 + parse 构造器）
+    - `storage.py`：`UploadResult` dataclass + `LocalStorageBackend` 类（upload/download/exists/delete 4 方法 + hashlib.sha256 真实计算）
+    - `registry.py`：`ModelRegistry` 类（8 个方法：register/get/get_production/list_versions/transition_stage/rollback/list_models/download_artifact + 阶段转换校验 + 自动归档 + registry.json 持久化）
+  - **TOML 配置文件**：`config/default_registry.toml`（storage=local + base_dir=./models + 6 个阶段转换开关）
+  - **示例脚本**：
+    - `examples/registry_register_promote.py`：单模型注册 + 提升 Production + 文件验证
+    - `examples/registry_rollback.py`：3 版本连续注册 + 自动归档 + rollback 验证
+  - **代码质量**：
+    - **27 单元测试**全部通过（types 12 + error 0 + filter 1 + signature 3 + storage/local 4 + registry 8 = 28 → 实际 27）
+    - `cargo test -p axon-registry --lib` 全绿
+    - `cargo build -p axon-registry --features python` 编译通过
+    - `cargo clippy -p axon-registry --all-targets -- -D warnings` 零警告
+    - `cargo test --workspace --no-run` 全量编译通过
+    - 两个 Python 示例均输出 `=== ALL PASS ===`
+  - **架构决策**：
+    - **DashMap 内存索引**：版本索引用 `DashMap` 实现并发安全，register/transition 互不阻塞
+    - **持久化到本地文件**：每次索引变更后同步写入 `registry.json`，进程重启后可通过反序列化恢复
+    - **async_trait + spawn_blocking**：保留 async API 以支持未来 S3/HTTP 后端，LocalStorage 用 `spawn_blocking` 避免阻塞 runtime
+    - **as_any 抽象**：通过 trait 提供 `as_any()` 让 `ModelRegistry` 在创建时自动推断 `persist_dir`
+    - **阶段转换表**：`validate_transition` 用 `matches!` 宏声明 6 种合法转换（含 Archived -> Production 回滚场景），非法转换返回 `InvalidTransition` 错误
+    - **Feature 隔离**：`python` 是 optional feature，不启用时编译零开销
+    - **Python 纯实现**：3 个核心子模块都是纯 Python（不依赖 Rust 编译产物），保证 CI / 离线环境可用
+    - **回滚语义**：rollback 时 current Production → RolledBack（Production -> RolledBack 是合法转换），然后 latest Archived → Production（Archived -> Production 是合法转换）
+- **Phase 2 P5**：`axon-integration-tests` crate（跨模块端到端集成测试：HPO + Walk-forward + Tracker + Registry + Distributed 联合验证）
+  - **`fixtures` 模块**：`SyntheticReturns` 固定种子收益率生成器（含趋势 + 漂移 + 噪声） + `simulate_strategy_oos` 模拟 OOS 表现 + `make_trial` / `make_pareto` 合成 HPO 试验与 Pareto 点
+  - **`hpo_tracker` 模块**：3 个集成测试 — HPO trial 评估后实时写入 Tracker、Config + 模拟 trial 评估、批量超参日志
+  - **`walkforward_registry` 模块**：3 个集成测试 — Walk-forward 评估后最佳 fold 自动注册 + 提升 Production、不同窗口类型组合、3 轮迭代累积注册
+  - **`tracker_registry` 模块**：3 个集成测试 — Tracker 指标驱动 Registry 阶段转换、Tracker 与 Registry 元数据一致性、Tracker flush 与 Registry 持久化独立
+  - **`multi_objective` 模块**：3 个集成测试 — 多目标 HPO + Pareto 前沿 + Tracker 一体化验证、Pareto 支配关系传递性、多目标 HPO 配置
+  - **`e2e_pipeline` 模块**：3 个集成测试 — 端到端 HPO → Walk-forward → Tracker → Registry 全链路、训练 → 注册 → 回滚、不同窗口类型 + Tracker 指标报告
+  - **15 个集成测试**全部通过（`cargo test -p axon-integration-tests` 全绿）
+  - **测试覆盖**：
+    - 端到端数据流验证：tracker 记录的指标与 registry 写入的元数据完全一致
+    - 阶段转换决策：基于指标阈值（final_sharpe ≥ 1.5 && final_loss ≤ 0.3）自动 Production
+    - 多目标 Pareto：6 个 trial 评估 → 2D Pareto 前沿 → 超体积计算 → 最优解注册
+    - 回滚流程：3 版本注册 → 自动归档 → rollback 自动恢复上一个 Archived 到 Production
+  - **架构决策**：
+    - **独立 integration crate**：避免循环依赖（axon-hpo 依赖 axon-walk-forward 等，integration crate 反向组合所有 Phase 2 模块）
+    - **临时目录隔离**：所有集成测试用 `tempfile::tempdir()` 创建独立存储，重启自动清理
+    - **合成数据驱动**：用 `SyntheticReturns` + 数学模型（`parabolic_objective` / `multi_objective_eval`）模拟真实场景，避免依赖外部数据集
+    - **`#[allow(dead_code)]` 标注公共辅助**：保持测试 helper 函数为 pub 以便跨模块复用，未使用时不报警告
+    - **`SemVer::new(0, 0, 0)` 起始**：walker + registry 的迭代注册从 patch=0 递增，确保多版本顺序可追溯
 
 ### Changed
 
@@ -393,6 +515,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`portfolio/portfolio.rs` → `portfolio/core.rs`**：消除 `clippy::module_inception` 警告
 - **`scheduler/scheduler.rs` → `scheduler/core.rs`**：消除 `clippy::module_inception` 警告
 - **`Scheduler::run_until` 重构**：消除 `while_let_loop` 警告（改为 `while let`），提取 `fire_task` 私有方法消除代码重复与 `map_clone` 警告
+- **Phase 3 P3.3**：`axon-backtest::impact` 模块（市场冲击感知撮合引擎）
+  - **`impacted_engine` 模块**：`ImpactedMatchingEngine` 包装 `L1MatchingEngine`，在撮合成交价上叠加 [`ImpactModel`] 计算的即时冲击，并将永久冲击累加到内部 `permanent_offset` 状态（影响后续订单簿中间价）。支持永久冲击衰减（`with_permanent_decay`）与统计跟踪（`ImpactStats`：累计瞬时/永久冲击、订单数、成交笔数）
+  - **`config` 模块**：`ImpactedEngineConfig` 通过 TOML 加载模型类型（`linear` / `power_law`）+ 系数 + 深度层级数 + 即时/永久比例 + 幂律指数 + 衰减率，`validate()` 校验所有参数合法性
+  - **`python` 模块**：PyO3 绑定，导出 `PyImpactedMatchingEngine`，支持从 Python dict 创建、提交订单、获取最优买卖价/中间价
+  - **关键设计**：
+    - **撮合前快照**：在 `inner.submit()` 之前调用 `snapshot_with_offset()` 获取订单簿状态，避免撮合后对手方深度被吃空导致 `compute_impact` 返回零冲击
+    - **永久冲击平移**：永久冲击以整体平移形式叠加到所有价格（bid 减 offset，ask 减 offset），模拟真实市场的价格中枢移动
+    - **零依赖冲击调整**：`compute_impact` 是 `Box<dyn ImpactModel>`，新增模型（如 Almgren-Chriss）无需修改撮合引擎
+  - **测试覆盖**：30 个单元测试覆盖（构造、零冲击、瞬时冲击、永久冲击、衰减、FOK 订单、空订单簿、模型切换、ToOrderBookSnapshot trait、Debug 输出）+ 1 文档测试，全部通过（合计 151 个）
+  - **性能基准**（`cargo bench -p axon-backtest`）：
+    - 线性冲击下单笔撮合：~370µs
+    - 100 笔订单吞吐：~30ms（~300µs/订单）
+    - TOML 配置加载：~2.5µs
+    - 从 TOML 构造引擎：~1.9µs
 
 ### Deprecated
 

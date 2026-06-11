@@ -4,6 +4,7 @@
 //! 以及 Binance / Coinbase / Kraken 三个常用交易所的默认费率表。
 
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use rust_decimal_macros::dec;
 
 #[cfg(feature = "serde")]
@@ -538,5 +539,150 @@ mod tests {
         assert_eq!(t.find_tier(dec!(1_000_000)).unwrap().label, "VIP 1");
         // 1_000_001 > 1M ⇒ VIP 1
         assert_eq!(t.find_tier(dec!(1_000_001)).unwrap().label, "VIP 1");
+    }
+
+    // ─── 并发测试 ──────────────────────────────────────────
+
+    /// FeeTable 是不可变数据（所有方法仅 &self）：
+    /// Arc 共享 + 多线程并发 maker_fee / taker_fee 查询应保持一致性
+    #[test]
+    fn test_concurrent_fee_lookup() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 50;
+        const PER_THREAD: usize = 1_000;
+
+        let table = Arc::new(FeeTable::binance_default());
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for thread_id in 0..N_THREADS {
+            let t = Arc::clone(&table);
+            handles.push(thread::spawn(move || {
+                for j in 0..PER_THREAD {
+                    // 不同 thread 查询不同 volume 段（运行时构造 Decimal）
+                    let volume =
+                        Decimal::from_u64((thread_id * 10_000 + j * 10) as u64).unwrap();
+                    let notional = dec!(1_000);
+                    let maker = t.maker_fee(notional, volume).expect("maker");
+                    let taker = t.taker_fee(notional, volume).expect("taker");
+                    // 验证 fee 是非负的
+                    assert!(maker >= dec!(0));
+                    assert!(taker >= dec!(0));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+    }
+
+    /// 多线程并发 find_tier 查询：返回结果应一致
+    #[test]
+    fn test_concurrent_find_tier() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 100;
+        const PER_THREAD: usize = 100;
+
+        let table = Arc::new(FeeTable::binance_default());
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for _ in 0..N_THREADS {
+            let t = Arc::clone(&table);
+            handles.push(thread::spawn(move || {
+                for v in [
+                    dec!(0),
+                    dec!(500_000),
+                    dec!(1_000_000),
+                    dec!(5_000_000),
+                    dec!(10_000_000),
+                    dec!(100_000_000),
+                ] {
+                    let tier = t.find_tier(v).expect("tier");
+                    assert!(!tier.label.is_empty());
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+    }
+
+    /// 多线程同时构造 FeeTable + 查询：每个线程独立构造、查询、销毁
+    /// （构造过程涉及排序 ⇒ 验证 Decimal 排序在多线程下不共享可变状态）
+    #[test]
+    fn test_concurrent_independent_tables() {
+        use std::thread;
+
+        const N_THREADS: usize = 50;
+        const PER_THREAD: usize = 100;
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for thread_id in 0..N_THREADS {
+            handles.push(thread::spawn(move || {
+                for _ in 0..PER_THREAD {
+                    // 每个线程独立构造
+                    let t = FeeTable::binance_default()
+                        .with_native_token_discount(dec!(0.10))
+                        .with_institutional_discount(dec!(0.05));
+                    let volume = Decimal::from_u64((thread_id * 10_000) as u64).unwrap();
+                    let fee = t.taker_fee(dec!(1_000), volume).expect("fee");
+                    // 验证 0 < fee < notional
+                    assert!(fee > dec!(0));
+                    assert!(fee < dec!(1_000));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+    }
+
+    /// 静态断言：FeeTable 是 Send + Sync（不可变数据天然支持）
+    #[test]
+    fn test_fee_table_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<FeeTable>();
+    }
+
+    /// 高并发 + 边界 volume：查询阶梯边界值不 panic
+    #[test]
+    fn test_concurrent_boundary_lookups() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 50;
+        const PER_THREAD: usize = 200;
+
+        let table = Arc::new(FeeTable::binance_default());
+        let boundary_volumes = [
+            dec!(0),                 // 最低档
+            dec!(999_999),           // VIP 1 - 1
+            dec!(1_000_000),         // VIP 1
+            dec!(4_999_999),         // VIP 2 - 1
+            dec!(5_000_000),         // VIP 2
+            dec!(9_999_999),         // VIP 3 - 1
+            dec!(10_000_000),        // VIP 3
+            dec!(99_999_999),        // VIP 9 - 1
+            dec!(100_000_000),       // VIP 9
+            dec!(1_000_000_000),     // 高于最大档
+        ];
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for _ in 0..N_THREADS {
+            let t = Arc::clone(&table);
+            handles.push(thread::spawn(move || {
+                for j in 0..PER_THREAD {
+                    let v = boundary_volumes[j % boundary_volumes.len()];
+                    let tier = t.find_tier(v);
+                    assert!(tier.is_some(), "所有 volume 都应能匹配到某个阶梯");
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
     }
 }

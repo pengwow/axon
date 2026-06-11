@@ -371,4 +371,232 @@ mod tests {
         assert_eq!(original.queue_length(), 7);
         assert_eq!(cloned.queue_length(), 6);
     }
+
+    // ─── 并发测试 ──────────────────────────────────────────
+
+    /// 多线程并发 enqueue：100 个线程各 enqueue 100 次 ⇒ 队列长度 = 10000
+    /// 验证 Mutex 保护的正确性，无数据竞争
+    #[test]
+    fn test_concurrent_enqueue() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 100;
+        const PER_THREAD: usize = 100;
+
+        let model = Arc::new(
+            QueueLatencyModel::new(Duration::from_millis(1), Duration::from_millis(1))
+                .with_max_queue_length(N_THREADS * PER_THREAD + 100),
+        );
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for _ in 0..N_THREADS {
+            let m = Arc::clone(&model);
+            handles.push(thread::spawn(move || {
+                for _ in 0..PER_THREAD {
+                    m.enqueue();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        assert_eq!(model.queue_length(), N_THREADS * PER_THREAD);
+    }
+
+    /// 多线程并发 dequeue：N 次 enqueue + M 次 dequeue ⇒ 队列长度 = N - M
+    #[test]
+    fn test_concurrent_enqueue_dequeue() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_ENQ: usize = 1_000;
+        const N_DEQ: usize = 300;
+
+        let model = Arc::new(
+            QueueLatencyModel::new(Duration::from_millis(1), Duration::from_millis(1))
+                .with_max_queue_length(usize::MAX),
+        );
+
+        // 先填满
+        for _ in 0..N_ENQ {
+            model.enqueue();
+        }
+        assert_eq!(model.queue_length(), N_ENQ);
+
+        let mut handles = Vec::with_capacity(N_DEQ);
+        for _ in 0..N_DEQ {
+            let m = Arc::clone(&model);
+            handles.push(thread::spawn(move || {
+                m.dequeue();
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        assert_eq!(model.queue_length(), N_ENQ - N_DEQ);
+    }
+
+    /// 多线程混合 enqueue + dequeue + sample_delay：不 panic 且结果一致
+    #[test]
+    fn test_concurrent_mixed_operations() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_PROD: usize = 50;
+        const N_CONS: usize = 50;
+        const N_SAMPLE: usize = 20;
+        const PER_OP: usize = 100;
+
+        let model = Arc::new(
+            QueueLatencyModel::new(Duration::from_millis(10), Duration::from_millis(1))
+                .with_max_queue_length(usize::MAX),
+        );
+
+        let mut handles = Vec::new();
+
+        // 生产者
+        for _ in 0..N_PROD {
+            let m = Arc::clone(&model);
+            handles.push(thread::spawn(move || {
+                for _ in 0..PER_OP {
+                    m.enqueue();
+                }
+            }));
+        }
+        // 消费者
+        for _ in 0..N_CONS {
+            let m = Arc::clone(&model);
+            handles.push(thread::spawn(move || {
+                for _ in 0..PER_OP {
+                    m.dequeue();
+                }
+            }));
+        }
+        // 采样者
+        for _ in 0..N_SAMPLE {
+            let m = Arc::clone(&model);
+            handles.push(thread::spawn(move || {
+                for _ in 0..PER_OP {
+                    // sample_delay 内部读取 queue_length ⇒ 也需 Mutex 保护
+                    let d = m.sample_delay(PathType::OrderSubmit);
+                    assert!(d >= Duration::from_millis(0));
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        // 净变化 = 净 enqueue 数 - 净 dequeue 数。
+        // 由于 producer/consumer 启动顺序与交错，consumer 可能尝试从空队列 dequeue
+        // （saturating_sub 不会下溢），最终值 ≥ 0 且 ≤ N_PROD * PER_OP
+        let final_len = model.queue_length();
+        assert!(
+            final_len <= N_PROD * PER_OP,
+            "队列长度不可能超过累计 enqueue 数"
+        );
+    }
+
+    /// 多线程并发 set_queue_length：最后一个写入生效
+    #[test]
+    fn test_concurrent_set_queue_length() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 50;
+
+        let model = Arc::new(
+            QueueLatencyModel::new(Duration::from_millis(1), Duration::from_millis(1))
+                .with_max_queue_length(usize::MAX),
+        );
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for i in 0..N_THREADS {
+            let m = Arc::clone(&model);
+            handles.push(thread::spawn(move || {
+                m.set_queue_length(i * 10);
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        // 最终队列长度应是 N_THREADS - 1 的 10 倍（0 到 N-1 中某个值被最后写入）
+        let final_len = model.queue_length();
+        assert_eq!(final_len % 10, 0);
+        assert!(final_len < N_THREADS * 10);
+    }
+
+    /// 多线程并发 enqueue + max_queue_length 截断：实际长度不超过 max
+    #[test]
+    fn test_concurrent_enqueue_respects_max() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 100;
+        const PER_THREAD: usize = 1_000;
+        const MAX: usize = 500;
+
+        let model = Arc::new(
+            QueueLatencyModel::new(Duration::from_millis(1), Duration::from_millis(1))
+                .with_max_queue_length(MAX),
+        );
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for _ in 0..N_THREADS {
+            let m = Arc::clone(&model);
+            handles.push(thread::spawn(move || {
+                for _ in 0..PER_THREAD {
+                    m.enqueue();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        // 严格不超过 max（不变量由 Mutex 序列化保证）
+        assert!(model.queue_length() <= MAX);
+        assert_eq!(model.queue_length(), MAX);
+    }
+
+    /// 多线程并发 sample_delay：高并发读取应一致
+    /// （保证 sample_delay 内部对 queue_length 的读取是原子的）
+    #[test]
+    fn test_concurrent_sample_delay_consistent() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_SAMPLE_THREADS: usize = 100;
+        const PER_THREAD: usize = 1_000;
+
+        let model = Arc::new(
+            QueueLatencyModel::new(Duration::from_millis(10), Duration::from_millis(1))
+                .with_max_queue_length(usize::MAX),
+        );
+        // 固定队列长度 = 5
+        model.set_queue_length(5);
+
+        let mut handles = Vec::with_capacity(N_SAMPLE_THREADS);
+        for _ in 0..N_SAMPLE_THREADS {
+            let m = Arc::clone(&model);
+            handles.push(thread::spawn(move || {
+                for _ in 0..PER_THREAD {
+                    let d = m.sample_delay(PathType::OrderSubmit);
+                    // base=10ms, factor=4 ⇒ base/4*4 = 10ms
+                    // queue=5, processing=1ms ⇒ +5ms = 15ms
+                    assert_eq!(d, Duration::from_millis(15));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+    }
+
+    /// Send + Sync 静态断言
+    #[test]
+    fn test_queue_is_send_sync_static() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<QueueLatencyModel>();
+    }
 }

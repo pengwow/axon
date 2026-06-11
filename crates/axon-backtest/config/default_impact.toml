@@ -1,0 +1,20 @@
+# AXON 冲击感知撮合引擎默认配置
+#
+# 适用于 Phase 3 P3.3：axon-backtest 撮合引擎集成 ImpactModel。
+# 通过 `toml` 加载到 `ImpactedEngineConfig`。
+
+[model]
+# 模型类型："linear" | "power_law"
+type = "linear"
+# 冲击系数
+coefficient = 0.05
+# 深度层级数（用于累加订单簿深度）
+depth_levels = 10
+# 即时/永久冲击比例（0.0~1.0，1.0 = 全部即时）
+instantaneous_ratio = 0.7
+# 幂律指数（仅 power_law 必需）
+exponent = 0.5
+
+[permanent]
+# 永久冲击衰减率（0.0~1.0，0.0 = 不衰减）
+decay = 0.0

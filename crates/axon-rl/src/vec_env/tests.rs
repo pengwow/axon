@@ -12,7 +12,7 @@
 use crate::action::types::{Action, ActionSpace, ContinuousActionSpace};
 use crate::env::config::EnvConfig;
 use crate::env::types::MarketBar;
-use crate::vec_env::{BasicEnvFactory, EnvFactory, SyncVecEnv, VecEnvError};
+use crate::vec_env::{AsyncVecEnv, BasicEnvFactory, EnvFactory, SyncVecEnv, VecEnvError};
 
 /// 构造 N 根递增 K 线
 fn make_market_data(n: usize) -> Vec<MarketBar> {
@@ -384,4 +384,168 @@ fn test_stats_empty_inputs_return_zero() {
     };
     assert_eq!(s.mean_reward(), 0.0);
     assert_eq!(s.mean_steps(), 0.0);
+}
+
+// ─── 并发测试 ──────────────────────────────────────────
+
+/// AsyncVecEnv 是核心的多线程组件：验证 N 个 worker 线程能并行执行 reset + step
+#[test]
+fn test_async_concurrent_reset_and_step() {
+    use std::time::Instant;
+
+    // max_steps = 200 ⇒ 跑 100 步不会触发 done
+    let factory = make_factory(200);
+    let mut envs = AsyncVecEnv::new(factory, 8).unwrap();
+    let obs = envs.reset_all().expect("reset_all");
+    assert_eq!(obs.len(), 8);
+
+    let actions: Vec<Action> = (0..8).map(|_| Action::continuous(vec![0.0])).collect();
+
+    // 串行 step 100 次
+    let start = Instant::now();
+    for _ in 0..100 {
+        let results = envs.step_batch(actions.clone()).expect("step_batch");
+        assert_eq!(results.len(), 8);
+    }
+    let elapsed_serial = start.elapsed();
+
+    // 验证所有环境的 step_count 累加到 100
+    let stats = envs.statistics();
+    for i in 0..8 {
+        assert_eq!(stats.step_counts[i], 100, "env {i} 应累计 100 步");
+    }
+
+    // 注意：AsyncVecEnv 是串行派发 + worker 线程并行执行 env.step。
+    // 由于 env.step 内部很快，调度开销可能主导 ⇒ elapsed 仅做烟雾测试
+    assert!(elapsed_serial.as_secs() < 30);
+}
+
+/// 多次构造 + 丢弃 AsyncVecEnv：Drop 应正确 join 所有 worker 线程
+#[test]
+fn test_async_concurrent_construction_drop() {
+    use std::thread;
+
+    const N_INSTANCES: usize = 20;
+
+    let mut handles = Vec::with_capacity(N_INSTANCES);
+    for _ in 0..N_INSTANCES {
+        handles.push(thread::spawn(|| {
+            for _ in 0..5 {
+                let factory = make_factory(10);
+                let mut envs = AsyncVecEnv::new(factory, 4).expect("new");
+                envs.reset_all().expect("reset_all");
+                let actions: Vec<Action> = (0..4)
+                    .map(|_| Action::continuous(vec![0.0]))
+                    .collect();
+                for _ in 0..10 {
+                    envs.step_batch(actions.clone()).expect("step_batch");
+                }
+                // envs 在这里 drop ⇒ 应 join 所有 worker
+            }
+        }));
+    }
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+}
+
+/// 多线程构造独立 SyncVecEnv 实例 + 各自执行完整 episode：
+/// 验证 VecEnv 在并行场景下的独立正确性
+#[test]
+fn test_sync_concurrent_independent_instances() {
+    use std::thread;
+
+    const N_THREADS: usize = 20;
+    const EPISODE_LEN: usize = 50;
+
+    let mut handles = Vec::with_capacity(N_THREADS);
+    for thread_id in 0..N_THREADS {
+        handles.push(thread::spawn(move || {
+            let factory = make_factory(EPISODE_LEN);
+            let mut envs = SyncVecEnv::new(factory, 4).unwrap();
+            envs.reset_all().unwrap();
+            let actions: Vec<Action> = (0..4)
+                .map(|_| Action::continuous(vec![thread_id as f64 / N_THREADS as f64]))
+                .collect();
+            for _ in 0..EPISODE_LEN {
+                envs.step_batch(actions.clone()).unwrap();
+            }
+            let stats = envs.statistics();
+            // 验证每个 env 累计步数 = EPISODE_LEN
+            for (i, &sc) in stats.step_counts.iter().enumerate() {
+                assert_eq!(sc, EPISODE_LEN, "thread {thread_id} env {i} 步数错误");
+            }
+        }));
+    }
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+}
+
+/// AsyncVecEnv + Action 大量并行：channel 消息不丢失
+#[test]
+fn test_async_message_passing_no_loss() {
+    const N_ENVS: usize = 16;
+    const N_STEPS: usize = 50;
+
+    let factory = make_factory(100);
+    let mut envs = AsyncVecEnv::new(factory, N_ENVS).unwrap();
+    envs.reset_all().expect("reset_all");
+
+    // 每步派发 N_ENVS 个动作
+    for step in 0..N_STEPS {
+        let actions: Vec<Action> = (0..N_ENVS)
+            .map(|i| Action::continuous(vec![(step + i) as f64 * 0.01]))
+            .collect();
+        let results = envs.step_batch(actions).expect("step_batch");
+        assert_eq!(results.len(), N_ENVS, "step {step}: 应收到 N_ENVS 个响应");
+        for (_obs, reward, _done, info) in &results {
+            assert!(reward.is_finite());
+            assert!(info.current_step <= 100);
+        }
+    }
+}
+
+/// 静态断言：SyncVecEnv 持有内部 Mutex（Vec<T>）⇒ 自身是 Send（如果 T 是 Send）
+#[test]
+fn test_sync_vec_env_send() {
+    fn assert_send<T: Send>() {}
+    // SyncVecEnv 内部是 Vec<TradingEnv>，TradingEnv 需 Send
+    // 编译期断言
+    assert_send::<SyncVecEnv>();
+}
+
+/// AsyncVecEnv 持有多个 channel + JoinHandle，应是 Send
+#[test]
+fn test_async_vec_env_send() {
+    fn assert_send<T: Send>() {}
+    assert_send::<AsyncVecEnv>();
+}
+
+/// 大量并发 step + done 自动重置：验证 done 标志 + episode 计数在并发下正确
+#[test]
+fn test_async_auto_reset_under_load() {
+    const N_ENVS: usize = 8;
+    const MAX_STEPS: usize = 5;
+
+    let factory = make_factory(MAX_STEPS);
+    let mut envs = AsyncVecEnv::new(factory, N_ENVS).unwrap();
+    envs.reset_all().expect("reset_all");
+
+    let hold = Action::continuous(vec![0.0]);
+    // 跑 2 个完整 episode（每 episode MAX_STEPS 步）
+    for _ in 0..(MAX_STEPS * 2) {
+        let results = envs.step_batch(vec![hold.clone(); N_ENVS]).expect("step_batch");
+        assert_eq!(results.len(), N_ENVS);
+    }
+
+    let stats = envs.statistics();
+    for i in 0..N_ENVS {
+        // episode_count 在 reset_all 时已 +1（每 env 1 个 episode）
+        // 之后每次自动重置 +1
+        // 跑 2 个 episode 后每个 env 应至少经历 1 次 episode 完成
+        // 由于 done 阈值是 5 步 ⇒ 跑 10 步可能触发 1-2 次 done
+        // 这里只验证 step_count 累加正确
+        assert!(stats.step_counts[i] >= MAX_STEPS);
+    }
 }

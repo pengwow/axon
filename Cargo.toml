@@ -9,6 +9,9 @@ members = [
     "crates/axon-walk-forward",
     "crates/axon-cli",
     "crates/axon-distributed",
+    "crates/axon-tracker",
+    "crates/axon-registry",
+    "crates/axon-integration-tests",
 ]
 
 # 统一的目标目录，加速增量编译
@@ -33,6 +36,8 @@ axon-rl = { path = "crates/axon-rl" }
 axon-hpo = { path = "crates/axon-hpo" }
 axon-walk-forward = { path = "crates/axon-walk-forward" }
 axon-distributed = { path = "crates/axon-distributed" }
+axon-tracker = { path = "crates/axon-tracker" }
+axon-registry = { path = "crates/axon-registry" }
 
 # 错误处理
 thiserror = "1.0"
@@ -49,9 +54,17 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # 并发原语
 crossbeam-channel = "0.5"
+dashmap = "6"
+parking_lot = "0.12"
 
 # 异步运行时
 tokio = { version = "1.35", features = ["full"] }
+
+# 异步
+async-trait = "0.1"
+
+# 加密 / 哈希
+sha2 = "0.10"
 
 # 时间
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -66,6 +79,7 @@ rand = "0.8"
 # 测试辅助
 proptest = "1.4"
 pretty_assertions = "1.4"
+tempfile = "3"
 
 # Workspace 级 profile 配置
 [profile.release]

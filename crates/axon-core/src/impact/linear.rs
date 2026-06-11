@@ -379,12 +379,62 @@ mod tests {
         assert!((m.instantaneous_ratio - de.instantaneous_ratio).abs() < 1e-10);
     }
 
-    /// 极大 coefficient
+    /// 极大系数 × 极大订单量
     #[test]
-    fn test_extreme_coefficient() {
-        let m = LinearImpactModel::new(1.0e9);
+    fn test_extreme_coefficient_and_quantity() {
+        let m = LinearImpactModel::new(1e9);
         let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
         // 1e9 × 0.1 = 1e8
         assert!(impact.total() >= 1.0e7);
+    }
+
+    // ─── 并发测试 ────────────────────────────────────
+
+    /// 多线程并发 compute_impact：LinearImpactModel 无内部状态，
+    /// 多个线程 Arc 共享模型并并行调用应保持确定性
+    #[test]
+    fn test_concurrent_compute_impact() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 50;
+        const PER_THREAD: usize = 1_000;
+
+        let m = Arc::new(LinearImpactModel::new(0.05));
+        let ob = Arc::new(sample_ob());
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for _ in 0..N_THREADS {
+            let model = Arc::clone(&m);
+            let book = Arc::clone(&ob);
+            handles.push(thread::spawn(move || {
+                for _ in 0..PER_THREAD {
+                    let buy_impact = model.compute_impact(
+                        Quantity::from_f64(10.0),
+                        Side::Buy,
+                        &book,
+                    );
+                    let sell_impact = model.compute_impact(
+                        Quantity::from_f64(10.0),
+                        Side::Sell,
+                        &book,
+                    );
+                    // 买冲击 > 0（因为买单吃卖单）
+                    assert!(buy_impact.total() > 0.0);
+                    // 卖冲击 > 0（因为卖单吃买单）
+                    assert!(sell_impact.total() > 0.0);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+    }
+
+    /// 静态断言：LinearImpactModel 是 Send + Sync
+    #[test]
+    fn test_linear_impact_model_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<LinearImpactModel>();
     }
 }

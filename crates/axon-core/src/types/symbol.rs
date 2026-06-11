@@ -97,4 +97,65 @@ mod tests {
         assert!(s.is_empty());
         assert_eq!(s.len(), 0);
     }
+
+    // ─── 边界测试 ──────────────────────────────────────
+
+    /// 超长 symbol（10 KB）应正常处理
+    #[test]
+    fn test_symbol_extremely_long_string() {
+        let long: String = "A".repeat(10_000);
+        let s = Symbol::from(long.as_str());
+        assert_eq!(s.len(), 10_000);
+        assert!(!s.is_empty());
+    }
+
+    /// 包含特殊字符（数字、分隔符、点）的 symbol
+    #[test]
+    fn test_symbol_with_special_chars() {
+        let cases = [
+            "BTC-USDT",       // 横线分隔
+            "AAPL",           // 纯字母
+            "600519.SH",      // A 股风格
+            "BRK.B",          // 含点
+            "ESZ5",           // 期货合约
+            "中文-品种",       // 中文（newtype 包装不限制）
+        ];
+        for c in cases {
+            let s = Symbol::from(c);
+            assert_eq!(s.as_str(), c);
+            assert!(!s.is_empty());
+        }
+    }
+
+    /// 大量 symbol 在 HashSet 中保持去重
+    #[test]
+    fn test_symbol_large_set_dedup() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        for i in 0..10_000 {
+            set.insert(Symbol::from(format!("SYM-{i}")));
+        }
+        assert_eq!(set.len(), 10_000);
+        // 重复插入不增加大小
+        for i in 0..10_000 {
+            set.insert(Symbol::from(format!("SYM-{i}")));
+        }
+        assert_eq!(set.len(), 10_000);
+    }
+
+    /// 含控制字符的 symbol（newtype 不做清洗，保留原样）
+    #[test]
+    fn test_symbol_with_control_chars_preserved() {
+        let s = Symbol::from("AAA\tBBB\nCCC");
+        assert_eq!(s.len(), 11);
+        assert!(s.as_str().contains('\t'));
+    }
+
+    /// Symbol 默认值（Default）应为空
+    #[test]
+    fn test_symbol_default_is_empty() {
+        let s = Symbol::default();
+        assert!(s.is_empty());
+        assert_eq!(s.len(), 0);
+    }
 }

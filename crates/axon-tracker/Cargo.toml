@@ -1,0 +1,45 @@
+[package]
+name = "axon-tracker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON 实验追踪：统一 trait + 4 个后端（Memory/Local/MLflow/WandB）+ 缓冲 + 重试（Phase 2 P3 阶段填充）"
+
+[features]
+default = []
+# PyO3 绑定
+python = ["dep:pyo3"]
+# HTTP 客户端（MLflow / WandB 后端需要）
+http = ["dep:reqwest", "dep:base64"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+
+# Python 绑定
+pyo3 = { version = "0.28", optional = true }
+
+# HTTP 客户端（MLflow / WandB）
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "blocking"], optional = true }
+base64 = { version = "0.22", optional = true }
+
+# URL 解析
+url = { version = "2.5", features = ["serde"] }
+# TOML 解析
+toml = "0.8"
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+proptest = { workspace = true}
+
+[lib]
+crate-type = ["rlib", "cdylib"]

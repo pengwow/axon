@@ -349,4 +349,49 @@ mod tests {
         let impact = m.compute_impact(Quantity::from_f64(10.0), Side::Buy, &sample_ob());
         assert!(impact.total() > 0.0);
     }
+
+    // ─── 并发测试 ────────────────────────────────────
+
+    /// 多线程并发 compute_impact：PowerLawImpactModel 无内部状态
+    #[test]
+    fn test_concurrent_compute_impact() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const N_THREADS: usize = 50;
+        const PER_THREAD: usize = 1_000;
+
+        let m = Arc::new(PowerLawImpactModel::new(0.05, 0.5));
+        let ob = Arc::new(sample_ob());
+
+        let mut handles = Vec::with_capacity(N_THREADS);
+        for _ in 0..N_THREADS {
+            let model = Arc::clone(&m);
+            let book = Arc::clone(&ob);
+            handles.push(thread::spawn(move || {
+                for q in 1..=PER_THREAD {
+                    let impact = model.compute_impact(
+                        Quantity::from_f64(q as f64),
+                        Side::Buy,
+                        &book,
+                    );
+                    // 幂律冲击：qty^k × coefficient × 累计深度
+                    assert!(impact.total() > 0.0);
+                    // 即时冲击 + 永久冲击 = total
+                    assert!(impact.instantaneous >= 0.0);
+                    assert!(impact.permanent >= 0.0);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+    }
+
+    /// 静态断言：PowerLawImpactModel 是 Send + Sync
+    #[test]
+    fn test_power_law_impact_model_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PowerLawImpactModel>();
+    }
 }

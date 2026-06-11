@@ -1,0 +1,17 @@
+# AXON 实验追踪默认配置
+#
+# 适用于本地离线 + 内存模式
+# 通过 toml 加载到 axon_tracker.config
+
+[backend]
+type = "memory"
+
+[buffer]
+capacity = 1000
+flush_interval_s = 30
+
+[retry]
+max_retries = 3
+base_delay_ms = 100
+max_delay_s = 10
+backoff_factor = 2.0

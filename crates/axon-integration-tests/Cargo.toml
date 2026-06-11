@@ -1,0 +1,55 @@
+[package]
+name = "axon-integration-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON Phase 2 集成测试：跨 crate 端到端流程验证（HPO + Walk-forward + Tracker + Registry + Distributed）"
+
+[features]
+default = []
+# 集成测试按需启用 python / http 特性
+
+[dependencies]
+# 内部 Phase 2 crates
+axon-hpo = { workspace = true }
+axon-walk-forward = { workspace = true }
+axon-tracker = { workspace = true }
+axon-registry = { workspace = true }
+axon-distributed = { workspace = true }
+
+# 错误处理 / 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# 异步
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# 测试辅助
+tempfile = { workspace = true }
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }
+
+# 数值与时间
+rand = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+# 测试日志
+tracing = { workspace = true }
+
+[[test]]
+# 集成测试入口：cargo test --test integration_tests 即可
+name = "integration_tests"
+path = "tests/integration_tests.rs"
+
+[lib]
+# 集成测试 crate 以 lib + tests/ 形式组织
+crate-type = ["rlib"]
