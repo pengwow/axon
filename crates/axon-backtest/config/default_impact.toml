@@ -1,6 +1,6 @@
 # AXON 冲击感知撮合引擎默认配置
 #
-# 适用于 Phase 3 P3.3：axon-backtest 撮合引擎集成 ImpactModel。
+# 适用于 Phase 4 P4.3：axon-backtest 撮合引擎集成 ImpactModel。
 # 通过 `toml` 加载到 `ImpactedEngineConfig`。
 
 [model]

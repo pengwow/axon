@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 
@@ -14,11 +15,18 @@ use crate::types::{ModelMetadata, ModelStage, ModelVersion, SemVer};
 /// 模型注册表
 ///
 /// 内存索引：model_name -> Vec<ModelVersion>（按版本排序）
+/// 版本号分配：每个 model name 独立的 `AtomicU64` 计数器，
+///   用 `fetch_add` 原子递增，保证并发 register 下版本号唯一
 /// 持久化：每次索引变更后写入 `<base>/<name>/registry.json`
 pub struct ModelRegistry {
     storage: Arc<dyn StorageBackendTrait>,
     /// 内存索引
     index: DashMap<String, Vec<ModelVersion>>,
+    /// 版本号计数器（按 model name 隔离）
+    ///
+    /// 不依赖 index 持锁分配，避免与 `storage.upload().await` 跨锁边界。
+    /// 初始值 = index 中最大 patch（首次访问时懒初始化）。
+    version_counters: DashMap<String, Arc<AtomicU64>>,
     /// 注册表持久化目录（通常是 storage 的 base_dir）
     persist_dir: PathBuf,
 }
@@ -31,6 +39,7 @@ impl ModelRegistry {
         Self {
             storage,
             index: DashMap::new(),
+            version_counters: DashMap::new(),
             persist_dir,
         }
     }
@@ -44,6 +53,7 @@ impl ModelRegistry {
         Self {
             storage,
             index: DashMap::new(),
+            version_counters: DashMap::new(),
             persist_dir,
         }
     }
@@ -63,7 +73,9 @@ impl ModelRegistry {
         metadata: ModelMetadata,
         signature: Option<ModelSignature>,
     ) -> RegistryResult<ModelVersion> {
-        let version = self.next_version(name).await?;
+        // 版本号在持原子计数器时分配，不依赖 index 持锁，
+        // 后续 `storage.upload().await` 期间不会被并发 register 干扰。
+        let version = self.next_version(name);
         let dest_key = format!("{name}/{version}/model.bin");
         let upload = self.storage.upload(artifact_path, &dest_key).await?;
 
@@ -288,20 +300,29 @@ impl ModelRegistry {
 
     // --- 内部辅助方法 ---
 
-    async fn next_version(&self, name: &str) -> RegistryResult<SemVer> {
-        match self.index.get(name) {
-            Some(versions) => {
-                let max_ver = versions
-                    .iter()
-                    .map(|mv| mv.version.clone())
-                    .max()
-                    .unwrap_or_else(|| SemVer::new(0, 0, 0));
-                let mut next = max_ver;
-                next.bump_patch();
-                Ok(next)
-            }
-            None => Ok(SemVer::new(1, 0, 0)),
-        }
+    /// 分配下一个版本号（patch 单调递增）
+    ///
+    /// 用 `AtomicU64::fetch_add` 原子递增 patch，保证并发 register 下版本号唯一。
+    /// 不持 `index` 锁、不跨 `.await` 边界，因此与 `storage.upload()` 并发安全。
+    ///
+    /// 首个版本 = `1.0.0`，之后 `bump_patch` 单调递增（与 `test_register_first_version`
+    /// 单元测试期望一致）。
+    fn next_version(&self, name: &str) -> SemVer {
+        let counter = self
+            .version_counters
+            .entry(name.to_string())
+            .or_insert_with(|| {
+                // 首次访问：懒初始化为 index 中最大 patch（index 为空时 0）
+                let max_patch = self
+                    .index
+                    .get(name)
+                    .and_then(|v| v.iter().map(|mv| mv.version.patch).max())
+                    .unwrap_or(0);
+                Arc::new(AtomicU64::new(u64::from(max_patch)))
+            })
+            .clone();
+        let patch = counter.fetch_add(1, Ordering::SeqCst);
+        SemVer::new(1, 0, patch as u32)
     }
 
     fn validate_transition(from: ModelStage, to: ModelStage) -> RegistryResult<()> {

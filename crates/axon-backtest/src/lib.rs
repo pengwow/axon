@@ -8,7 +8,7 @@
 //! |------|------|------|
 //! | [`engine`] | Phase 1A | 回测引擎主循环 |
 //! | [`matching`] | Phase 1A | L1/L2 撮合（价格-时间优先 + 修改/统计） |
-//! | [`impact`] | Phase 3 P3.3 | 市场冲击感知撮合（叠加 `ImpactModel`） |
+//! | [`impact`] | Phase 4 P4.3 | 市场冲击感知撮合（叠加 `ImpactModel`） |
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cce0b02983265112b58da8cb0bd9ce88f9948c7944c8eac9b753dc8bafe7581c # shrinks to book = OrderBookSnapshot { timestamp: Timestamp { nanos: 0 }, bids: [], asks: [OrderBookLevel { price: Price(0.01), quantity: Quantity(0.0) }, OrderBookLevel { price: Price(0.01), quantity: Quantity(0.0) }, OrderBookLevel { price: Price(0.01), quantity: Quantity(0.0) }, OrderBookLevel { price: Price(0.01), quantity: Quantity(0.02) }, OrderBookLevel { price: Price(1827.2), quantity: Quantity(6099.14) }, OrderBookLevel { price: Price(1915.24), quantity: Quantity(175.12) }, OrderBookLevel { price: Price(2626.35), quantity: Quantity(3042.1) }, OrderBookLevel { price: Price(3219.96), quantity: Quantity(8972.57) }, OrderBookLevel { price: Price(5063.5), quantity: Quantity(4363.46) }, OrderBookLevel { price: Price(7137.1900000000005), quantity: Quantity(9638.82) }, OrderBookLevel { price: Price(9072.45), quantity: Quantity(2514.26) }] }

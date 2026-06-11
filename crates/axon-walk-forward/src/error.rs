@@ -35,5 +35,55 @@ pub enum WalkForwardError {
     Io(String),
 }
 
+impl WalkForwardError {
+    /// 是否可重试
+    ///
+    /// - 数据 / 索引 / 泄漏检测错误 ⇒ 不可重试（业务错误）
+    /// - IO 错误 ⇒ 可重试（瞬态）
+    /// - 序列化错误 ⇒ 可重试
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::Io(_) | Self::Serialization(_))
+    }
+}
+
 /// Walk-Forward Result 类型别名
 pub type WalkForwardResult<T> = Result<T, WalkForwardError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_retryable_classification() {
+        // 可重试
+        assert!(WalkForwardError::Io("disk full".into()).is_retryable());
+        assert!(WalkForwardError::Serialization("yaml".into()).is_retryable());
+        // 不可重试
+        assert!(!WalkForwardError::Config("missing field".into()).is_retryable());
+        assert!(!WalkForwardError::InsufficientData {
+            need: 100,
+            got: 50
+        }
+        .is_retryable());
+        assert!(!WalkForwardError::IndexOutOfBounds("idx 10".into()).is_retryable());
+        assert!(!WalkForwardError::LeakageDetected("overlap".into()).is_retryable());
+    }
+
+    #[test]
+    fn test_insufficient_data_display_includes_needs_and_got() {
+        let e = WalkForwardError::InsufficientData {
+            need: 100,
+            got: 30,
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("100"));
+        assert!(msg.contains("30"));
+    }
+
+    #[test]
+    fn test_leakage_detected_display_includes_reason() {
+        let e = WalkForwardError::LeakageDetected("train/test overlap at index 50".into());
+        let msg = e.to_string();
+        assert!(msg.contains("overlap"));
+    }
+}

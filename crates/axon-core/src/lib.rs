@@ -17,7 +17,7 @@
 //! | [`scheduler`] | Phase 1A | 调度器（模拟时钟/定时任务/周期任务/事件循环） |
 //! | [`impact`] | Phase 1A P2 | 市场冲击模型（线性/幂律/自适应/Almgren-Chriss） |
 //! | [`latency`] | Phase 1A P2 | 延迟模型（固定/正态/指数/均匀/队列/组合） |
-//! | [`volatility`] | Phase 3 | 历史波动率估计器（EWMA/滚动/Garman-Klass） |
+//! | [`volatility`] | Phase 4 | 历史波动率估计器（EWMA/滚动/Garman-Klass） |
 //! | [`error`] | Phase 0+ | 统一错误类型 |
 //!
 //! # 设计原则

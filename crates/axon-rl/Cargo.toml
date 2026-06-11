@@ -34,6 +34,12 @@ pyo3 = { version = "0.28", optional = true }
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 proptest = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "rl_bench"
+path = "../../benches/rl_bench.rs"
+harness = false
 
 # 同时生成 cdylib（供 Python `import axon_rl` 使用）和 rlib（供 Rust crate 引用）
 [lib]

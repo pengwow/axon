@@ -27,6 +27,22 @@ pub enum ImpactModelError {
     ComputationOverflow,
 }
 
+impl ImpactModelError {
+    /// 是否可重试
+    ///
+    /// 当前所有冲击模型错误都是逻辑错误（参数非法、深度不足），
+    /// 重试不会改变结果。`ComputationOverflow` 在浮点不稳定时偶发，
+    /// 但通常意味着实现 bug，也不应盲目重试。
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::EmptyOrderBook
+            | Self::InvalidParameter(_)
+            | Self::InsufficientDepth { .. }
+            | Self::ComputationOverflow => false,
+        }
+    }
+}
+
 /// 冲击模型 `Result` 别名
 pub type ImpactModelResult<T> = std::result::Result<T, ImpactModelError>;
 
@@ -55,5 +71,22 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("10"));
         assert!(msg.contains("5"));
+    }
+
+    #[test]
+    fn test_is_retryable_all_false() {
+        // 所有冲击模型错误都是逻辑错误 ⇒ 不可重试
+        let cases = vec![
+            ImpactModelError::EmptyOrderBook,
+            ImpactModelError::InvalidParameter("x".into()),
+            ImpactModelError::InsufficientDepth {
+                required: 1,
+                available: 0,
+            },
+            ImpactModelError::ComputationOverflow,
+        ];
+        for e in cases {
+            assert!(!e.is_retryable(), "{e:?} should not be retryable");
+        }
     }
 }

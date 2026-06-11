@@ -1,0 +1,38 @@
+[package]
+name = "axon-explain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON 可解释性引擎：SHAP 特征归因 + 反事实解释 + 决策报告（Phase 3 P0 阶段填充）"
+
+[features]
+default = []
+python = ["dep:pyo3"]
+
+[dependencies]
+# 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+# 错误
+thiserror = { workspace = true }
+# 日志
+tracing = { workspace = true }
+# 时间戳
+chrono = { workspace = true }
+# 数学（f64 运算、统计）
+rand = { workspace = true }
+
+# Python 绑定（可选）
+pyo3 = { version = "0.28", optional = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }
+
+[lib]
+crate-type = ["rlib"]

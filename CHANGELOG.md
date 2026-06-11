@@ -501,6 +501,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - **合成数据驱动**：用 `SyntheticReturns` + 数学模型（`parabolic_objective` / `multi_objective_eval`）模拟真实场景，避免依赖外部数据集
     - **`#[allow(dead_code)]` 标注公共辅助**：保持测试 helper 函数为 pub 以便跨模块复用，未使用时不报警告
     - **`SemVer::new(0, 0, 0)` 起始**：walker + registry 的迭代注册从 patch=0 递增，确保多版本顺序可追溯
+- **Phase 2 P6**：横向任务 — 模糊测试 + 契约测试 + Registry 并发修复
+  - **`axon-integration-tests::fuzz` 模块**（基于 `proptest` 的 property-based fuzz）
+    - 23 个 `proptest!` 块覆盖：线性冲击 / 幂律冲击 / 自适应冲击 / Almgren-Chriss / 撮合引擎（L1 撮合 + 零冲击/部分成交/成交价单调性） / 波动率估计器（EWMA / Rolling） / 订单簿（零价差零成交、深度边界、L2 构建有序性）
+    - 自定义 `order_book_strategy()`：约束 `ask > bid` 避免生成交叉订单簿（locked/crossed book），与 `LinearImpactModel` / `PowerLawImpactModel` 默认 `depth_levels = 10` 保持一致
+    - 幂律单调性测试用相对深度比例（0.1% / 1% / 10%）避免极端 `qty/depth` 比值导致浮点失真
+    - `PROPTEST_CASES=200`（release 模式）下全部 23 个 prop_test 仍然通过
+  - **`axon-integration-tests::contract` 模块**（API / 数据契约稳定性）
+    - 28 个 `pub fn contract_*` 入口，覆盖：SemVer 解析/递增/排序、ModelStage 字符串映射、TrialState 谓词、StudyDirection Optuna 字符串、WindowType 默认值、RunStatus MLflow 字符串、WalkForwardConfig 向后兼容（缺字段回退默认值）、SamplerType adjacently-tagged 别名、TrialResult 缺字段容错、HPOResult/HPOConfig 必填字段、f64 序列化精度（含整数+小数往返无误差）
+    - 与 `hpo_tracker.rs` / `walkforward_registry.rs` 一致：契约函数去掉 `#[test]` 标记，由 `tests/integration_tests.rs` 中的 `#[test]` 包装调用，pub fn 在 lib 模式下也能被 cargo test 找到
+  - **`axon-registry::ModelRegistry` 并发修复**（修复 3 个集成测试失败根因）
+    - **根因**：`register` 是 async 函数，`next_version` 用 `entry()` 持锁计算版本号后，需跨 `storage.upload().await` 才 `push` 到 index，期间锁被释放；多个线程同时执行会读到同一个 `max_ver`，全部 `bump_patch` 到相同值 → 版本号重复
+    - **修复方案**：新增 `version_counters: DashMap<String, Arc<AtomicU64>>` 字段，每个 model name 一个独立计数器；用 `AtomicU64::fetch_add(1, Ordering::SeqCst)` 原子递增 patch，天然唯一
+    - **架构改进**：
+      - `next_version` 从 `async fn` 改为 `fn`（不需要 await），与 `storage.upload().await` 完全并发安全
+      - 懒初始化：`or_insert_with` 中根据 index 最大 patch 初始化计数器，index 为空时从 0 开始
+      - 首版本固定为 `1.0.0`（修复原实现 0.0.1 与单元测试期望不一致的问题）
+    - **关键代码**：
+
+      ```rust
+      let counter = self.version_counters.entry(name.to_string())
+          .or_insert_with(|| {
+              let max_patch = self.index.get(name)
+                  .and_then(|v| v.iter().map(|mv| mv.version.patch).max())
+                  .unwrap_or(0);
+              Arc::new(AtomicU64::new(u64::from(max_patch)))
+          }).clone();
+      let patch = counter.fetch_add(1, Ordering::SeqCst);
+      SemVer::new(1, 0, patch as u32)
+      ```
+
+  - **3 个并发集成测试转绿**
+    - `concurrent_registry_registrations`（8 线程 × 5 版本 = 40 次 register，40 个唯一 patch 0..39）
+    - `walkforward_registry_iterative_registration`（3 次迭代 register，patch 0/1/2 顺序递增）
+    - `e2e_pipeline_train_register_rollback`（HPO → 训练 → 注册 → 提升 Production → rollback 全链路）
+  - **测试统计**
+    - `cargo test -p axon-integration-tests` 27 个集成测试 + 23 个 prop_test 全部通过
+    - `cargo test -p axon-registry --lib` 27 个单元测试全部通过（含之前失败的 `test_register_first_version`）
+    - `cargo test --workspace` ~1301 个测试全部通过，无回归
 
 ### Changed
 

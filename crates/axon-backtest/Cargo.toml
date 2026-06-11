@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 authors.workspace = true
-description = "AXON 回测引擎：事件队列、撮合、延迟、费用模型 + 市场冲击集成（Phase 1A / Phase 3 阶段填充）"
+description = "AXON 回测引擎：事件队列、撮合、延迟、费用模型 + 市场冲击集成（Phase 1A / Phase 4 阶段填充）"
 
 [features]
 default = []

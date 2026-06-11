@@ -34,3 +34,9 @@ rust_decimal_macros = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }
 bincode = "1.3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "core_bench"
+path = "../../benches/core_bench.rs"
+harness = false

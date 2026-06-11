@@ -11,6 +11,8 @@ members = [
     "crates/axon-distributed",
     "crates/axon-tracker",
     "crates/axon-registry",
+    "crates/axon-llm",
+    "crates/axon-explain",
     "crates/axon-integration-tests",
 ]
 
@@ -67,7 +69,7 @@ async-trait = "0.1"
 sha2 = "0.10"
 
 # 时间
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 
 # 数值类型
 rust_decimal = { version = "1.35", features = ["serde"] }

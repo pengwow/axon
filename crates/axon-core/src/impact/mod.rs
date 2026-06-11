@@ -12,7 +12,7 @@
 //! - [`linear`]：[`LinearImpactModel`] 线性冲击
 //! - [`power_law`]：[`PowerLawImpactModel`] 幂律冲击
 //! - [`adaptive`]：[`AdaptiveImpactModel`] 自适应冲击
-//! - [`almgren_chriss`]：[`AlmgrenChrissModel`] 最优执行模型（Phase 3）
+//! - [`almgren_chriss`]：[`AlmgrenChrissModel`] 最优执行模型（Phase 4）
 //! - [`error`]：[`ImpactModelError`] 错误类型
 
 pub mod adaptive;

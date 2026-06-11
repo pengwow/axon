@@ -15,7 +15,9 @@ default = []
 # 集成测试按需启用 python / http 特性
 
 [dependencies]
-# 内部 Phase 2 crates
+# 内部 Phase 1/2 crates
+axon-core = { workspace = true }
+axon-backtest = { workspace = true }
 axon-hpo = { workspace = true }
 axon-walk-forward = { workspace = true }
 axon-tracker = { workspace = true }

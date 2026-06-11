@@ -16,6 +16,9 @@
 //! | [`tracker_registry`] | axon-tracker + axon-registry | 指标驱动阶段转换 |
 //! | [`multi_objective`] | axon-hpo + axon-tracker | Pareto 前沿追踪 |
 //! | [`e2e_pipeline`] | 所有 4 个 Phase 2 crate | 端到端训练管线 |
+//! | [`error_recovery_and_concurrency`] | 多 crate | 错误恢复 + 并发 |
+//! | [`fuzz`] | axon-core + axon-backtest | 属性测试 / 模糊测试 |
+//! | [`contract`] | 所有 crate | API/数据契约稳定性 |
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
@@ -23,6 +26,15 @@
 
 /// 共享的测试辅助函数与 fixture
 pub mod fixtures;
+
+/// 错误恢复与并发场景的集成测试
+pub mod error_recovery_and_concurrency;
+
+/// 模糊测试（基于 `proptest` 的 property-based fuzz）
+pub mod fuzz;
+
+/// 契约测试（API/数据契约稳定性）
+pub mod contract;
 
 /// 集成测试模块（按 crate 维度组织）
 pub mod hpo_tracker;

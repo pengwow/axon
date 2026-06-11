@@ -1,0 +1,42 @@
+[package]
+name = "axon-llm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON LLM 智能体：ReAct 推理 + Tool Calling + 上下文管理（Phase 3 P0 阶段填充）"
+
+[features]
+default = []
+# PyO3 绑定（默认禁用，启用需 python toolchain）
+python = ["dep:pyo3"]
+
+[dependencies]
+# 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+# 错误
+thiserror = { workspace = true }
+# 日志
+tracing = { workspace = true }
+# 异步
+async-trait = { workspace = true }
+tokio = { workspace = true }
+# 时间戳（用于消息时间）
+chrono = { workspace = true }
+
+# Python 绑定
+pyo3 = { version = "0.28", optional = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+# 同时生成 cdylib（供 Python `import axon_llm` 使用）和 rlib（供 Rust crate 引用）
+[lib]
+crate-type = ["rlib", "cdylib"]

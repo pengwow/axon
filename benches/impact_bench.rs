@@ -13,7 +13,7 @@ use axon_core::impact::{LinearImpactModel, PowerLawImpactModel};
 use axon_core::market::Side;
 use axon_core::order::{Order, OrderType, TimeInForce};
 use axon_core::types::{Price, Quantity, Symbol};
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 
 /// 构造一个限价单
 fn make_limit(id: u64, side: Side, price: f64, qty: f64) -> Order {
@@ -38,16 +38,37 @@ fn fill_ask_book(engine: &mut ImpactedMatchingEngine, levels: usize, qty_per_lev
     }
 }
 
+/// 准备 N 档同价卖单（用于持续撮合场景，避免价格分层导致首档吃掉后无法成交）
+fn fill_ask_book_same_price(
+    engine: &mut ImpactedMatchingEngine,
+    start_id: u64,
+    levels: usize,
+    qty_per_level: f64,
+) {
+    for i in 0..levels {
+        let order = make_limit(start_id + i as u64, Side::Sell, 100.0, qty_per_level);
+        engine.submit(order);
+    }
+}
+
 /// 基准：单笔买单撮合（无冲击）
 fn bench_submit_no_impact(c: &mut Criterion) {
     let m: Box<dyn axon_core::impact::ImpactModel> = Box::new(LinearImpactModel::new(0.0));
     let mut engine = ImpactedMatchingEngine::new(m);
-    fill_ask_book(&mut engine, 10, 10.0);
+    // 准备 100 档同价卖单 + 每次补一档，确保每 iter 都有成交
+    fill_ask_book_same_price(&mut engine, 1, 100, 10.0);
+    let mut next_id: u64 = 1000;
 
     c.bench_function("submit_no_impact", |b| {
         b.iter(|| {
-            let buy = make_limit(1000, Side::Buy, 100.0, 1.0);
-            engine.submit(buy);
+            // 每 iter 递增 id，避免重复 id 被去重导致空撮合
+            let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
+            let r = engine.submit(buy);
+            // 补一档卖单维持订单簿深度 + permanent offset
+            let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
+            engine.submit(refill);
+            next_id = next_id.wrapping_add(1);
+            black_box(r);
         })
     });
 }
@@ -56,12 +77,17 @@ fn bench_submit_no_impact(c: &mut Criterion) {
 fn bench_submit_linear_impact(c: &mut Criterion) {
     let m: Box<dyn axon_core::impact::ImpactModel> = Box::new(LinearImpactModel::new(0.05));
     let mut engine = ImpactedMatchingEngine::new(m);
-    fill_ask_book(&mut engine, 10, 10.0);
+    fill_ask_book_same_price(&mut engine, 1, 100, 10.0);
+    let mut next_id: u64 = 1000;
 
     c.bench_function("submit_linear_impact", |b| {
         b.iter(|| {
-            let buy = make_limit(1000, Side::Buy, 100.0, 1.0);
-            engine.submit(buy);
+            let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
+            let r = engine.submit(buy);
+            let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
+            engine.submit(refill);
+            next_id = next_id.wrapping_add(1);
+            black_box(r);
         })
     });
 }
@@ -70,12 +96,17 @@ fn bench_submit_linear_impact(c: &mut Criterion) {
 fn bench_submit_power_law_impact(c: &mut Criterion) {
     let m: Box<dyn axon_core::impact::ImpactModel> = Box::new(PowerLawImpactModel::new(0.1, 0.5));
     let mut engine = ImpactedMatchingEngine::new(m);
-    fill_ask_book(&mut engine, 10, 10.0);
+    fill_ask_book_same_price(&mut engine, 1, 100, 10.0);
+    let mut next_id: u64 = 1000;
 
     c.bench_function("submit_power_law_impact", |b| {
         b.iter(|| {
-            let buy = make_limit(1000, Side::Buy, 100.0, 1.0);
-            engine.submit(buy);
+            let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
+            let r = engine.submit(buy);
+            let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
+            engine.submit(refill);
+            next_id = next_id.wrapping_add(1);
+            black_box(r);
         })
     });
 }
@@ -88,12 +119,18 @@ fn bench_submit_depth_scaling(c: &mut Criterion) {
         let m: Box<dyn axon_core::impact::ImpactModel> =
             Box::new(LinearImpactModel::new(0.05).with_depth(depth));
         let mut engine = ImpactedMatchingEngine::new(m);
-        fill_ask_book(&mut engine, 50, 10.0);
+        // 准备 100 档同价卖单 + 每 iter 补 1 档
+        fill_ask_book_same_price(&mut engine, 1, 100, 10.0);
+        let mut next_id: u64 = 1000;
 
         group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, _| {
             b.iter(|| {
-                let buy = make_limit(1000, Side::Buy, 100.0, 1.0);
-                engine.submit(buy);
+                let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
+                let r = engine.submit(buy);
+                let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
+                engine.submit(refill);
+                next_id = next_id.wrapping_add(1);
+                black_box(r);
             })
         });
     }
@@ -107,15 +144,20 @@ fn bench_submit_with_decay(c: &mut Criterion) {
     for &decay in &[0.0_f64, 0.1, 0.5, 1.0] {
         let m: Box<dyn axon_core::impact::ImpactModel> = Box::new(LinearImpactModel::new(0.05));
         let mut engine = ImpactedMatchingEngine::new(m).with_permanent_decay(decay);
-        fill_ask_book(&mut engine, 10, 10.0);
+        fill_ask_book_same_price(&mut engine, 1, 100, 10.0);
+        let mut next_id: u64 = 1000;
 
         group.bench_with_input(
             BenchmarkId::from_parameter(decay),
             &decay,
             |b, _| {
                 b.iter(|| {
-                    let buy = make_limit(1000, Side::Buy, 100.0, 1.0);
-                    engine.submit(buy);
+                    let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
+                    let r = engine.submit(buy);
+                    let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
+                    engine.submit(refill);
+                    next_id = next_id.wrapping_add(1);
+                    black_box(r);
                 })
             },
         );

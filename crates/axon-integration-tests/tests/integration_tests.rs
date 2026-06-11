@@ -4,7 +4,9 @@
 
 #![allow(clippy::needless_range_loop)]
 
+use axon_integration_tests::contract;
 use axon_integration_tests::e2e_pipeline;
+use axon_integration_tests::error_recovery_and_concurrency;
 use axon_integration_tests::hpo_tracker;
 use axon_integration_tests::multi_objective;
 use axon_integration_tests::tracker_registry;
@@ -88,4 +90,95 @@ async fn e2e_pipeline_train_register_rollback() {
 #[tokio::test]
 async fn e2e_pipeline_window_type_tracker() {
     e2e_pipeline::test_window_type_with_tracker_reporting().await;
+}
+
+// 错误恢复与并发场景
+#[tokio::test]
+async fn hpo_failure_does_not_pollute_registry() {
+    error_recovery_and_concurrency::test_hpo_failure_does_not_pollute_registry().await;
+}
+
+#[tokio::test]
+async fn concurrent_registry_registrations() {
+    error_recovery_and_concurrency::test_concurrent_registry_registrations().await;
+}
+
+#[tokio::test]
+async fn tracker_registry_data_consistency() {
+    error_recovery_and_concurrency::test_tracker_registry_data_consistency().await;
+}
+
+#[tokio::test]
+async fn purged_walkforward_registration() {
+    error_recovery_and_concurrency::test_purged_walkforward_registration().await;
+}
+
+#[test]
+fn config_serialization_roundtrip() {
+    error_recovery_and_concurrency::test_config_serialization_roundtrip();
+}
+
+#[tokio::test]
+async fn aggregate_oos_then_register() {
+    error_recovery_and_concurrency::test_aggregate_oos_then_register().await;
+}
+
+// ── 契约测试（直接调用模块函数） ──
+#[test]
+fn contract_semver_basics() {
+    contract::contract_semver_roundtrip_serde();
+    contract::contract_semver_parse_display_roundtrip();
+    contract::contract_semver_bump_invariant();
+    contract::contract_semver_ordering();
+}
+
+#[test]
+fn contract_enum_stability() {
+    contract::contract_model_stage_serde_stable();
+    contract::contract_model_stage_string_mapping_locked();
+    contract::contract_trial_state_serde_stable();
+    contract::contract_trial_state_predicates();
+    contract::contract_study_direction_serde_stable();
+    contract::contract_window_type_serde_stable();
+    contract::contract_window_type_default();
+    contract::contract_run_status_serde_stable();
+}
+
+#[test]
+fn contract_data_serde_roundtrip() {
+    contract::contract_trial_result_serde_stable();
+    contract::contract_trial_result_backward_compat_missing_intermediate();
+    contract::contract_walkforward_config_backward_compat();
+    contract::contract_sampler_type_aliases();
+    contract::contract_sampler_type_tpe_with_defaults();
+    contract::contract_study_config_full_roundtrip();
+    contract::contract_param_value_all_variants();
+    contract::contract_metric_value_scalar_roundtrip();
+    contract::contract_metric_value_histogram_roundtrip();
+    contract::contract_metrics_roundtrip();
+    contract::contract_metrics_default_zero();
+}
+
+#[test]
+fn contract_external_string_mappings() {
+    contract::contract_study_direction_optuna_string();
+    contract::contract_run_status_mlflow_string();
+}
+
+#[test]
+fn contract_breaking_change_detection() {
+    contract::contract_hpo_result_required_fields();
+    contract::contract_hpo_config_required_fields();
+    contract::contract_f64_precision_preserved_is_metrics();
+}
+
+// ── 模糊测试（proptest）入口 ──
+//
+// proptest 测试在 `#[test]` 内部由 `proptest!` 宏展开，
+// 这里仅作占位以便 cargo test 看到集成测试入口。
+#[test]
+fn fuzz_module_compiles() {
+    // 实际 proptest 用例由 `axon-integration-tests::fuzz` 模块内部驱动。
+    // 这里通过引用模块名来确保它被链接进测试二进制。
+    let _ = std::any::type_name::<axon_integration_tests::fuzz::FuzzMarker>();
 }
