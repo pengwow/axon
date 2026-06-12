@@ -16,6 +16,8 @@ default = []
 csv-source = ["dep:csv"]
 # 启用 WebSocket 实时数据源
 ws-source = ["dep:tokio-tungstenite"]
+# 启用 Parquet 数据源(PR3 M2,需 arrow + parquet 重型 dep,默认关闭)
+parquet-source = ["dep:parquet", "dep:arrow"]
 
 [dependencies]
 # 序列化
@@ -46,6 +48,9 @@ axon-core = { workspace = true }
 # 可选数据源
 csv = { version = "1.3", optional = true }
 tokio-tungstenite = { version = "0.24", optional = true }
+# 列式数据源(PR3 M2,feature-gated)
+parquet = { workspace = true, optional = true }
+arrow = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

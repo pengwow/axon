@@ -90,6 +90,10 @@ proptest = "1.4"
 pretty_assertions = "1.4"
 tempfile = "3"
 
+# 列式存储(PR3 M2 引入)
+arrow = "53"
+parquet = { version = "53", default-features = false, features = ["arrow", "snap", "brotli", "flate2", "lz4", "zstd"] }
+
 # Workspace 级 profile 配置
 [profile.release]
 lto = "thin"

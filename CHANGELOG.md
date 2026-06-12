@@ -603,6 +603,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 不引入新重型依赖;不替换手写测试(用户决策:补充)
   - 测试:50 → 56+ 通过(50 旧 + 6 proptest);bench 4 group × 3 size = ~12 case
 
+- **`axon-data` PR3 M2 Arrow/Parquet 数据源(增量)**:
+  - `parquet-source` feature(默认关闭,需 `arrow` 53 + `parquet` 53 共享依赖)
+  - `parquet = { version = "53", default-features = false, features = ["arrow", "snap", "brotli", "flate2", "lz4", "zstd"] }` workspace dep(显式 feature 列表,避免 6+ codec 全编译)
+  - `ParquetSource`(`src/sources/parquet.rs`):`DataSource` trait 实现,严格 4 列 schema(按位置:int64/f64/f64/utf8),与 CsvSource 行为对齐(同样输出 `Vec<Tick>`、同样 `Frequency::Tick` 约束)
+  - `validate_schema`:列数 ≥4 且列类型严格匹配,失败返回 `DataError::SchemaMismatch` 带 `expected` / `actual` 描述
+  - `batch_to_ticks`:Arrow `RecordBatch` → `Vec<Tick>` 转换(buy/sell/b/s 兼容)
+  - `tokio::task::spawn_blocking` 卸载同步 IO,避免污染 tokio runtime
+  - `with_batch_size(usize)` builder 自定义 batch size(默认 1024)
+  - 集成测试 `parquet_fixtures` 模块:3 个 case(`_basic_loads_five_rows` / `_rejects_wrong_schema` / `_rejects_wrong_column_type`)
+  - Benchmark group `parquet_load`:1k/10k/100k rows 加载吞吐(实测 187µs / 1.52ms / 16.5ms)
+  - 3 个测试 fixture:`sample_basic.parquet` / `sample_bad_schema.parquet` / `sample_bad_type.parquet`(用 `tests/fixtures/generate_sample.py` 脚本 + pyarrow 23 生成)
+  - 验收:parquet-source feature 单独启用可编译,3 个新集成测试通过,axon-data 0 新 clippy 警告,基线 56 tests 无回归(workspace 全量 ~1542 tests 通过)
+
 - **告警抑制审计** (workspace rule #4, commit 8ab90e7):
   - 删除 `live_trading_demo.rs` `Tool` variant 上的 `#[allow(dead_code)]`(变体已在 match / Display 中使用,rustc 不报警)
   - 删除 `openai_compat.rs` `_ensure_role_used` 死函数 + 注释(`Role` 未 import,fn 无 caller,完全冗余)

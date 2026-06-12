@@ -139,3 +139,65 @@ mod csv_fixtures {
         }
     }
 }
+
+// --- Parquet fixture 集成测试(需 parquet-source feature) ---
+
+#[cfg(feature = "parquet-source")]
+mod parquet_fixtures {
+    use super::*;
+    use axon_data::sources::ParquetSource;
+    use axon_data::DataSource;
+    use std::path::PathBuf;
+
+    /// 获取 fixture 路径(测试运行时 cwd 可能是 workspace root)
+    fn fixture_path(name: &str) -> PathBuf {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.push("tests/fixtures");
+        p.push(name);
+        p
+    }
+
+    #[tokio::test]
+    async fn parquet_fixture_basic_loads_five_rows() {
+        let src = ParquetSource::new("basic", fixture_path("sample_basic.parquet"));
+        let req = DataRequest::new("X", Utc::now(), Utc::now(), Frequency::Tick);
+        let ds = src.query(&req).await.expect("load basic parquet");
+        assert_eq!(ds.len(), 5);
+        // 验证时间戳严格按 0/1e9/2e9/3e9/4e9 纳秒
+        let ts: Vec<i64> = ds.iter().map(|t| t.timestamp.nanos).collect();
+        assert_eq!(ts, vec![0, 1_000_000_000, 2_000_000_000, 3_000_000_000, 4_000_000_000]);
+        // 验证 side 在 buy/sell 间交替
+        let sides: Vec<Side> = ds.iter().map(|t| t.side).collect();
+        assert_eq!(sides, vec![Side::Buy, Side::Sell, Side::Buy, Side::Sell, Side::Buy]);
+    }
+
+    #[tokio::test]
+    async fn parquet_fixture_rejects_wrong_schema() {
+        // 3 列(缺 side)— 应触发 SchemaMismatch
+        let src = ParquetSource::new("bad_schema", fixture_path("sample_bad_schema.parquet"));
+        let req = DataRequest::new("X", Utc::now(), Utc::now(), Frequency::Tick);
+        let err = src.query(&req).await.expect_err("should fail on 3-column file");
+        match err {
+            DataError::SchemaMismatch { expected, actual } => {
+                assert!(expected.contains("≥4 columns"), "expected contains '≥4 columns', got: {expected}");
+                assert!(actual.contains("3 columns"), "actual contains '3 columns', got: {actual}");
+            }
+            other => panic!("expected SchemaMismatch, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn parquet_fixture_rejects_wrong_column_type() {
+        // timestamp 列存成 utf8 — 应触发 column 0 type mismatch
+        let src = ParquetSource::new("bad_type", fixture_path("sample_bad_type.parquet"));
+        let req = DataRequest::new("X", Utc::now(), Utc::now(), Frequency::Tick);
+        let err = src.query(&req).await.expect_err("should fail on wrong type");
+        match err {
+            DataError::SchemaMismatch { expected, actual } => {
+                assert!(expected.contains("column 0"), "expected contains 'column 0', got: {expected}");
+                assert!(actual.contains("column 0"), "actual contains 'column 0', got: {actual}");
+            }
+            other => panic!("expected SchemaMismatch, got {other:?}"),
+        }
+    }
+}

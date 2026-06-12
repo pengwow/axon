@@ -1,7 +1,7 @@
 //! axon-data Criterion 基准测试
 //!
-//! 运行:`cargo bench -p axon-data --features csv-source`
-//! 4 个 group: lru_cache / dataset_lazy / csv_parse / mock_generate
+//! 运行:`cargo bench -p axon-data --features csv-source --features parquet-source`
+//! 5 个 group: lru_cache / dataset_lazy / csv_parse / mock_generate / parquet_load
 //!
 //! 关键约束(从项目 lessons learned 提取):
 //! - 用 black_box() 包装动态值,避免常量折叠
@@ -10,6 +10,19 @@
 
 use std::io::Write;
 use std::num::NonZeroUsize;
+
+#[cfg(feature = "parquet-source")]
+use arrow::array::{Float64Array, Int64Array, StringArray};
+#[cfg(feature = "parquet-source")]
+use arrow::datatypes::{DataType, Field, Schema};
+#[cfg(feature = "parquet-source")]
+use arrow::record_batch::RecordBatch;
+#[cfg(feature = "parquet-source")]
+use parquet::arrow::ArrowWriter;
+#[cfg(feature = "parquet-source")]
+use std::fs::File;
+#[cfg(feature = "parquet-source")]
+use std::sync::Arc;
 
 use axon_data::sources::{CsvSource, MockSource};
 use axon_data::types::{DataRequest, Frequency};
@@ -121,7 +134,8 @@ criterion_group!(
     bench_lru_cache,
     bench_dataset_lazy,
     bench_csv_parse,
-    bench_mock_generate
+    bench_mock_generate,
+    bench_parquet_load
 );
 criterion_main!(benches);
 
@@ -170,6 +184,64 @@ fn bench_csv_parse(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n_rows), &n_rows, |b, _| {
             b.iter(|| {
                 let src = CsvSource::new("bench", black_box(&path));
+                let ds = rt.block_on(src.query(black_box(&req))).unwrap();
+                black_box(ds.len());
+            });
+        });
+    }
+    group.finish();
+}
+
+/// group 5: ParquetSource::query 加载吞吐(需 parquet-source feature)
+///
+/// 动态生成临时 parquet 文件,避免常量折叠和文件 IO 缓存;
+/// 用 `std::mem::forget` 保留 NamedTempFile(NamedTempFile drop 时会删除文件)
+#[cfg(feature = "parquet-source")]
+fn bench_parquet_load(c: &mut Criterion) {
+    use axon_data::sources::ParquetSource;
+
+    let mut group = c.benchmark_group("parquet_load");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    for &n_rows in &[1_000usize, 10_000, 100_000] {
+        // 用 Arrow ArrowWriter 动态生成临时 parquet 文件
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        {
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("timestamp", DataType::Int64, false),
+                Field::new("price", DataType::Float64, false),
+                Field::new("quantity", DataType::Float64, false),
+                Field::new("side", DataType::Utf8, false),
+            ]));
+            let ts: Int64Array = (0..n_rows as i64).collect();
+            let prices: Float64Array = (0..n_rows).map(|i| 100.0 + (i % 100) as f64).collect();
+            let qtys: Float64Array = (0..n_rows).map(|_| 1.0_f64).collect();
+            let sides_vec: Vec<String> = (0..n_rows)
+                .map(|i| if i % 2 == 0 { "buy".to_string() } else { "sell".to_string() })
+                .collect();
+            let sides = StringArray::from(sides_vec);
+            let batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(ts),
+                    Arc::new(prices),
+                    Arc::new(qtys),
+                    Arc::new(sides),
+                ],
+            )
+            .unwrap();
+            let file = File::create(&path).unwrap();
+            let mut writer = ArrowWriter::try_new(file, schema, None).unwrap();
+            writer.write(&batch).unwrap();
+            writer.close().unwrap();
+        }
+        // 阻止 NamedTempFile 删除临时文件(必须 leak 到 bench 结束)
+        std::mem::forget(tmp);
+        let path_str = path.to_string_lossy().into_owned();
+        let req = DataRequest::new("BENCH", Utc::now(), Utc::now(), Frequency::Tick);
+        group.bench_with_input(BenchmarkId::from_parameter(n_rows), &n_rows, |b, _| {
+            b.iter(|| {
+                let src = ParquetSource::new("bench", black_box(&path_str));
                 let ds = rt.block_on(src.query(black_box(&req))).unwrap();
                 black_box(ds.len());
             });
