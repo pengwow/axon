@@ -12,4 +12,4 @@ pub mod mock;
 pub use mock::MockSource;
 
 #[cfg(feature = "csv-source")]
-pub use csv::CsvSource;
+pub use csv::{CsvColumnMapping, CsvSource, TimestampUnit};

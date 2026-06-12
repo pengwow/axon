@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b9a17d53e584ba76f136ebe48f18425e8d6caabe46051e071da8fe32ddb4e204 # shrinks to ticks = [Tick { timestamp: Timestamp { nanos: 0 }, price: Price(0.01), quantity: Quantity(0.01), side: Buy, _pad: [0, 0, 0] }], n_raw = 0

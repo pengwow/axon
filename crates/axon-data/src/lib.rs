@@ -29,11 +29,14 @@ pub mod types;
 
 // 内部模块
 mod service;
+// Property-based fuzz tests(仅测试时编译)
+#[cfg(test)]
+mod fuzz;
 
 pub use dataset::Dataset;
 pub use error::DataError;
 pub use pipeline::{FeatureMatrix, FeaturePipeline, Normalizer, ZScoreNormalizer};
-pub use service::DataService;
+pub use service::{CacheStats, DataService};
 pub use sources::MockSource;
 pub use traits::DataSource;
 pub use types::{DataRequest, Frequency};

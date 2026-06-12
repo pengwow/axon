@@ -33,11 +33,13 @@ hex = "0.4"
 # 异步
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "macros", "rt-multi-thread", "time"] }
-# 并发缓存
-dashmap = { workspace = true }
-parking_lot = { workspace = true }
+# LRU 缓存(L1 cache 容量限制)
+lru = "0.12"
 # Stream trait(公开 API 需要 `Pin<Box<dyn Stream<...>>>`,so 默认启用)
 futures-core = "0.3"
+# `stream::iter` 用于实现 `CsvSource::stream`(futures-core 不含此 API)
+# + `executor::block_on` 用于 tests
+futures = { version = "0.3", default-features = false, features = ["std", "executor"] }
 # 内部依赖
 axon-core = { workspace = true }
 
@@ -50,3 +52,9 @@ pretty_assertions = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
+# Criterion 基准测试框架
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "axon_data_bench"
+harness = false

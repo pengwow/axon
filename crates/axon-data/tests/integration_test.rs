@@ -80,3 +80,62 @@ fn feature_pipeline_fit_then_transform() {
     let mean: f32 = matrix.data.iter().sum::<f32>() / matrix.n_samples as f32;
     assert!(mean.abs() < 1e-5, "expected zero mean, got {mean}");
 }
+
+// --- CSV fixture 集成测试(需 csv-source feature) ---
+
+#[cfg(feature = "csv-source")]
+mod csv_fixtures {
+    use super::*;
+    use axon_data::sources::CsvSource;
+    use axon_data::DataSource;
+    use std::path::PathBuf;
+
+    /// 获取 fixture 路径(测试运行时 cwd 可能是 workspace root)
+    fn fixture_path(name: &str) -> PathBuf {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.push("tests/fixtures");
+        p.push(name);
+        p
+    }
+
+    #[tokio::test]
+    async fn csv_fixture_basic_loads_three_rows() {
+        let src = CsvSource::new("basic", fixture_path("sample_basic.csv").to_str().unwrap());
+        let req = DataRequest::new("X", Utc::now(), Utc::now(), Frequency::Tick);
+        let ds = src.query(&req).await.expect("load basic csv");
+        assert_eq!(ds.len(), 3);
+        // 时间戳:1e9, 2e9, 3e9 纳秒
+        let ts: Vec<i64> = ds.iter().map(|t| t.timestamp.nanos).collect();
+        assert_eq!(ts, vec![1_000_000_000, 2_000_000_000, 3_000_000_000]);
+    }
+
+    #[tokio::test]
+    async fn csv_fixture_custom_cols_inferred_via_header() {
+        // header: time, close, volume, buy_sell - 推断器应识别
+        let src = CsvSource::new("custom", fixture_path("sample_custom_cols.csv").to_str().unwrap());
+        let req = DataRequest::new("X", Utc::now(), Utc::now(), Frequency::Tick);
+        let ds = src.query(&req).await.expect("load custom csv");
+        assert_eq!(ds.len(), 2);
+        // price 应从 close 列读到
+        let prices: Vec<f64> = ds.iter().map(|t| t.price.as_f64()).collect();
+        assert_eq!(prices, vec![100.5, 101.0]);
+    }
+
+    #[tokio::test]
+    async fn csv_fixture_malformed_returns_corrupt_error_with_location() {
+        // 第 2 行 price 列是 "not_a_number",应触发 CorruptData 错误并带 location
+        let src = CsvSource::new("malformed", fixture_path("sample_malformed.csv").to_str().unwrap());
+        let req = DataRequest::new("X", Utc::now(), Utc::now(), Frequency::Tick);
+        let err = src.query(&req).await.expect_err("should fail on bad row");
+        match err {
+            DataError::CorruptData { expected, actual, location } => {
+                assert!(expected.contains("f64"));
+                assert!(actual.contains("line 1")); // 第 2 行(0-indexed header 是 0 行,数据 1 行起)
+                let loc = location.expect("location must be present");
+                assert!(loc.file.contains("sample_malformed.csv"));
+                assert_eq!(loc.column.as_deref(), Some("price"));
+            }
+            other => panic!("expected CorruptData, got {other:?}"),
+        }
+    }
+}

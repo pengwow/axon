@@ -4,6 +4,29 @@
 
 use thiserror::Error;
 
+/// CSV 数据源错误位置(文件:行:列)
+///
+/// 用于 `DataError::CorruptData` 等变体的可选位置上下文,
+/// 方便用户定位出错的具体文件/行/列。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CsvLocation {
+    /// 文件名或路径
+    pub file: String,
+    /// 1-indexed 行号
+    pub line: usize,
+    /// 列名(可选)
+    pub column: Option<String>,
+}
+
+impl std::fmt::Display for CsvLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.column {
+            Some(col) => write!(f, "{}:{}:{}", self.file, self.line, col),
+            None => write!(f, "{}:{}", self.file, self.line),
+        }
+    }
+}
+
 /// 数据服务错误
 #[derive(Debug, Error)]
 pub enum DataError {
@@ -24,13 +47,15 @@ pub enum DataError {
     #[error("network error: {0}")]
     Network(String),
 
-    /// 数据损坏(checksum 校验失败)
-    #[error("corrupt data: checksum {expected} != {actual}")]
+    /// 数据损坏(checksum 校验失败 / schema 不一致)
+    #[error("corrupt data: {expected} != {actual}{}", location.as_ref().map(|l| format!(" at {l}")).unwrap_or_default())]
     CorruptData {
         /// 期望的 SHA256
         expected: String,
         /// 实际的 SHA256
         actual: String,
+        /// 可选的位置上下文(文件/行/列)
+        location: Option<CsvLocation>,
     },
 
     /// 限流(server 提示重试)
@@ -51,3 +76,44 @@ pub enum DataError {
 
 /// 统一 Result 类型别名
 pub type DataResult<T> = Result<T, DataError>;
+
+// ===== 测试 =====
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_location_displays_with_line_and_column() {
+        let loc = CsvLocation {
+            file: "data.csv".into(),
+            line: 42,
+            column: Some("price".into()),
+        };
+        assert_eq!(format!("{loc}"), "data.csv:42:price");
+    }
+
+    #[test]
+    fn csv_location_displays_without_column() {
+        let loc = CsvLocation {
+            file: "x.csv".into(),
+            line: 1,
+            column: None,
+        };
+        assert_eq!(format!("{loc}"), "x.csv:1");
+    }
+
+    #[test]
+    fn corrupt_data_displays_with_location() {
+        let loc = CsvLocation { file: "x.csv".into(), line: 5, column: None };
+        let err = DataError::CorruptData {
+            expected: "f64".into(),
+            actual: "NaN".into(),
+            location: Some(loc),
+        };
+        let s = format!("{err}");
+        assert!(s.contains("x.csv:5"));
+        assert!(s.contains("f64"));
+        assert!(s.contains("NaN"));
+    }
+}

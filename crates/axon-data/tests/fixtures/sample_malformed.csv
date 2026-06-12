@@ -1,0 +1,4 @@
+timestamp,price,quantity,side
+0,100,10,buy
+1,not_a_number,20,sell
+2,200,30,buy

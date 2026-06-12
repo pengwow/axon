@@ -583,6 +583,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 验证: `cargo build --workspace --tests` → 0 errors, 无回归
   - 接入 `Cargo.toml` workspace members
 
+- **`axon-data` PR1 M1 深化**:
+  - `CsvSource`:加 `CsvColumnMapping` 灵活列映射 + `TimestampUnit` 枚举(Nanos/Micros/Millis/Secs)+ 自动 schema 推断(读 header)+ 时间窗口过滤 `query_with_time_filter`
+  - `MockSource`:加 `with_tick_series(count, nanos_per_step, price_fn)` 时间序列生成器
+  - `Dataset`:加 5 个 lazy 方法(`filter` / `take` / `skip` / `last_n` / `by_time_range`)
+  - `DataService`:用 `lru::LruCache` 替换 `DashMap`(默认容量 64,`with_cache_capacity` builder);新增 `CacheStats { hits, misses, len, capacity }`(AtomicU64 计数);`lib.rs` 重新导出 `CacheStats`
+  - `DataError::CorruptData`:带 `CsvLocation { file, line, column }` 错误上下文
+  - 移除 `dashmap` / `parking_lot` 依赖(改用 `lru` + `Mutex` + `AtomicU64`)
+  - 加 `lru = "0.12"` 依赖
+  - 测试:13 → 50 通过(36 lib + 8 integration + 6 doc tests);3 个 CSV fixture(`sample_basic` / `sample_custom_cols` / `sample_malformed`)
+
+- **`axon-data` PR2 测试加固 + 性能基线**:
+  - 新增 `src/fuzz.rs`:6 个 `proptest!` 块覆盖核心不变量(Dataset::filter 长度上界、take/skip 互逆、by_time_range 边界包含、checksum 纯函数性、LRU 容量约束、tick_series 计数)
+  - 配置:本地 50 cases(部分 20),nightly 200 cases(沿用 `axon-integration-tests` precedent)
+  - 新增 `benches/axon_data_bench.rs`:4 个 criterion group(lru_cache / dataset_lazy / csv_parse / mock_generate),维度 1k/10k/100k
+  - `Cargo.toml` 加 `criterion = "0.5"` dev-dep + `[[bench]] harness = false`
+  - 新增 `.github/workflows/bench-nightly.yml`:nightly schedule 跑 `cargo bench -- --quick`,产出 7 天 artifact
+  - `MockSource::rows` 改为 `pub(crate)` 供 fuzz.rs 访问
+  - 不引入新重型依赖;不替换手写测试(用户决策:补充)
+  - 测试:50 → 56+ 通过(50 旧 + 6 proptest);bench 4 group × 3 size = ~12 case
+
 - **告警抑制审计** (workspace rule #4, commit 8ab90e7):
   - 删除 `live_trading_demo.rs` `Tool` variant 上的 `#[allow(dead_code)]`(变体已在 match / Display 中使用,rustc 不报警)
   - 删除 `openai_compat.rs` `_ensure_role_used` 死函数 + 注释(`Role` 未 import,fn 无 caller,完全冗余)

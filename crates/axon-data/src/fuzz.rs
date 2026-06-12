@@ -1,0 +1,179 @@
+//! axon-data property-based fuzz tests(proptest)
+//!
+//! 参考 `axon-integration-tests::fuzz` 模式:集中模块,多 `proptest!` 块。
+//! 用随机输入验证核心 API 的代数性质(不变量),与单元测试互补:
+//! - 单元测试:固定输入覆盖已知边界
+//! - proptest:随机输入覆盖代数性质
+
+use proptest::prelude::*;
+
+use crate::dataset::Dataset;
+use crate::types::{DataRequest, Frequency};
+use axon_core::market::{Side, Tick};
+use axon_core::time::Timestamp;
+use axon_core::types::{Price, Quantity};
+use chrono::Utc;
+
+/// 单元:生成单个 Tick(时间/价/量全正,符合基本合法性)
+fn tick_strategy() -> impl Strategy<Value = Tick> {
+    (0u64..1_000_000, 0.01f64..1_000_000.0, 0.01f64..1000.0).prop_map(|(seq, price, qty)| {
+        Tick::new(
+            Timestamp::from_nanos(seq as i64 * 1_000_000_000),
+            Price::from_f64(price),
+            Quantity::from_f64(qty),
+            Side::Buy,
+        )
+    })
+}
+
+/// 单元:生成 Tick 序列(0..=64 行,避免 OOM)
+fn ticks_strategy() -> impl Strategy<Value = Vec<Tick>> {
+    proptest::collection::vec(tick_strategy(), 0..=64)
+}
+
+/// 构造测试用请求
+fn make_req() -> DataRequest {
+    DataRequest::new("FUZZ", Utc::now(), Utc::now(), Frequency::Tick)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    /// 不变量:`filter(f)` 输出长度 ≤ 输入长度,且每个保留项都满足 f
+    #[test]
+    fn dataset_filter_count_lte_input(
+        ticks in ticks_strategy(),
+        threshold in 0.0f64..1_000_000.0,
+    ) {
+        let req = make_req();
+        let ds = Dataset::new(ticks.clone(), vec![], "fuzz".into(), req);
+        // 谓词:价格 > threshold
+        let filtered = ds.filter(|t| t.price.as_f64() > threshold);
+        // 长度上界
+        prop_assert!(filtered.len() <= ds.len());
+        // 每个保留项必须满足 f
+        for t in filtered.iter() {
+            prop_assert!(t.price.as_f64() > threshold);
+        }
+    }
+
+    /// 不变量:`ds.take(n).skip(n)` 在 n ≤ len 时为空(0 行)
+    #[test]
+    fn dataset_take_skip_inverse(
+        ticks in ticks_strategy(),
+        n_raw in 0usize..200,
+    ) {
+        let req = make_req();
+        let ds = Dataset::new(ticks, vec![], "fuzz".into(), req);
+        let n = n_raw.min(ds.len());
+        let taken = ds.take(n);
+        let skipped = taken.skip(n);
+        // 跳过 n 之后应为空(take 后是 0..n 范围,再 skip(n) 越界 → 空)
+        prop_assert!(skipped.is_empty());
+        // 长度等于 ds.len().saturating_sub(n)(0 行当 n >= len)
+        prop_assert_eq!(skipped.len(), 0);
+    }
+
+    /// 不变量:`by_time_range(start, end)` 输出的每个 ts 都在 [start, end],长度 ≤ 输入
+    #[test]
+    fn dataset_by_time_range_bounds_inclusive(
+        ticks in ticks_strategy(),
+        start_seq in 0u64..1_000_000,
+        end_seq in 0u64..1_000_000,
+    ) {
+        let req = make_req();
+        let ds = Dataset::new(ticks, vec![], "fuzz".into(), req);
+        // 让 start <= end(随机生成的 start_seq/end_seq 可能倒置)
+        let (lo, hi) = if start_seq <= end_seq {
+            (start_seq, end_seq)
+        } else {
+            (end_seq, start_seq)
+        };
+        let start = Timestamp::from_nanos(lo as i64 * 1_000_000_000);
+        let end = Timestamp::from_nanos(hi as i64 * 1_000_000_000);
+        let ranged = ds.by_time_range(start, end);
+        // 长度上界
+        prop_assert!(ranged.len() <= ds.len());
+        // 边界包含
+        for t in ranged.iter() {
+            let ts = t.timestamp.nanos;
+            prop_assert!(ts >= start.nanos);
+            prop_assert!(ts <= end.nanos);
+        }
+    }
+
+    /// 不变量:相同 rows + 相同 schema 产生相同 checksum(与 source/req 无关)
+    #[test]
+    fn dataset_checksum_is_pure(ticks in ticks_strategy()) {
+        let req1 = DataRequest::new("A", Utc::now(), Utc::now(), Frequency::Tick);
+        let req2 = DataRequest::new("B", Utc::now(), Utc::now(), Frequency::Tick);
+        let ds1 = Dataset::new(ticks.clone(), vec![], "src1".into(), req1);
+        let ds2 = Dataset::new(ticks, vec![], "src2".into(), req2);
+        // 同样 rows + schema 产生同样 checksum(与 source/req 无关)
+        prop_assert_eq!(&ds1.checksum, &ds2.checksum);
+        // 校验和是 SHA256(64 hex chars)
+        prop_assert_eq!(ds1.checksum.len(), 64);
+    }
+}
+
+// group 2: 涉及外部依赖的测试用独立 proptest! 块,避免与轻量测试混用 prelude 冲突
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(20))]
+
+    /// 不变量:DataService LRU 缓存长度 ≤ 容量
+    /// 注:cases 较少(20)避免测试时间过长
+    #[test]
+    fn lru_cache_respects_capacity(
+        capacity in 2usize..=8,
+        n_inserts in 3usize..=12,
+        symbol_seed in 0u32..1000,
+    ) {
+        use crate::sources::MockSource;
+        use crate::DataService;
+        use std::num::NonZeroUsize;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result: Result<(), TestCaseError> = rt.block_on(async {
+            let svc = DataService::new()
+                .with_cache_capacity(NonZeroUsize::new(capacity).unwrap())
+                .register_source(Box::new(MockSource::with_tick_series("m", 0, 1, |_| 0.0)));
+            // 插入 n_inserts 个不同请求
+            for i in 0..n_inserts {
+                let req = DataRequest::new(
+                    format!("SYM{}", symbol_seed + i as u32),
+                    Utc::now(),
+                    Utc::now(),
+                    Frequency::Tick,
+                );
+                let _ = svc.load(&req).await.unwrap();
+            }
+            // 长度应 ≤ 容量
+            let stats = svc.cache_stats();
+            prop_assert!(stats.len <= capacity);
+            prop_assert_eq!(stats.capacity, capacity);
+            Ok::<(), TestCaseError>(())
+        });
+        result?;
+    }
+
+    /// 不变量:`with_tick_series(n, _, _)` 生成恰好 n 个 tick,首 ts = 0,
+    /// 时间戳按 nanos_per_step 等差
+    #[test]
+    fn mock_tick_series_count(
+        count in 0usize..=64,
+        nanos_step in 1i64..=1_000_000_000,
+    ) {
+        use crate::sources::MockSource;
+        let mock = MockSource::with_tick_series("btc", count, nanos_step, |i| 100.0 + i as f64);
+        // 长度精确
+        prop_assert_eq!(mock.rows.len(), count);
+        if count > 0 {
+            // 首 ts = 0
+            prop_assert_eq!(mock.rows[0].timestamp.nanos, 0);
+            // 等差
+            for i in 0..count {
+                let expected = i as i64 * nanos_step;
+                prop_assert_eq!(mock.rows[i].timestamp.nanos, expected);
+            }
+        }
+    }
+}
