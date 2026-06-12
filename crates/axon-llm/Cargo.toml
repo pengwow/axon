@@ -12,10 +12,29 @@ description = "AXON LLM 智能体：ReAct 推理 + Tool Calling + 上下文管�
 
 [features]
 default = []
-# PyO3 绑定（默认禁用，启用需 python toolchain）
+# PyO3 绑定(默认禁用,启用需 python toolchain)
 python = ["dep:pyo3"]
-# 启用 axon-explain 集成（异步记录 + 工具查询）
+# 启用 axon-explain 集成(异步记录 + 工具查询)
 explain = ["dep:axon-explain"]
+# 启用真实 LLM backend(DeepSeek / OpenAI / 本地推理服务)
+# 依赖:tokio-stream(流式)/ async-stream(stream 宏)/ sha2(fixture key)/ hex / rand(jitter)
+backends = [
+    "dep:tokio-stream",
+    "dep:async-stream",
+    "dep:sha2",
+    "dep:hex",
+    "dep:rand",
+    "dep:reqwest",
+    "dep:bytes",
+    "dep:futures-core",
+    "tokio/rt-multi-thread",
+    "tokio/macros",
+    "tokio/time",
+]
+# e2e 测试支持(wiremock mock HTTP)
+e2e = ["backends", "dep:wiremock"]
+# demo bin(deepseek 真实调用 + 真实工具)
+demo = ["backends", "dep:toml"]
 
 [dependencies]
 # 序列化
@@ -27,23 +46,44 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 # 异步
 async-trait = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync"] }
-# 时间戳（用于消息时间）
+tokio = { workspace = true, features = ["rt", "sync", "macros", "rt-multi-thread", "time"] }
+# 时间戳(用于消息时间)
 chrono = { workspace = true }
-# UUID（explain 集成使用）
+# UUID(explain 集成使用)
 uuid = { workspace = true }
 
 # Python 绑定
 pyo3 = { version = "0.28", optional = true }
 
-# 可解释性集成（feature-gated）
+# 可解释性集成(feature-gated)
 axon-explain = { workspace = true, optional = true }
+
+# LLM backend 可选依赖
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
+async-stream = { version = "0.3", optional = true }
+sha2 = { version = "0.10", optional = true }
+hex = { version = "0.4", optional = true }
+rand = { version = "0.8", optional = true }
+# 测试 / e2e 依赖
+wiremock = { version = "0.6", optional = true }
+# demo bin 依赖
+toml = { version = "0.8", optional = true }
+# bytes 类型(reqwest 间接依赖,但 stream_complete 类型签名需要直接用)
+bytes = { version = "1", optional = true }
+# Stream trait
+futures-core = { version = "0.3", optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 proptest = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 
-# 同时生成 cdylib（供 Python `import axon_llm` 使用）和 rlib（供 Rust crate 引用）
+# 同时生成 cdylib(供 Python `import axon_llm` 使用)和 rlib(供 Rust crate 引用)
 [lib]
 crate-type = ["rlib", "cdylib"]
+
+# 仅在 demo feature 启用时编译(避免 cargo test --workspace 默认编译失败)
+[[example]]
+name = "live_trading_demo"
+required-features = ["demo"]

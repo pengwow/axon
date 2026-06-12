@@ -1,0 +1,52 @@
+[package]
+name = "axon-data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON 数据服务：多源接入（CSV/WS）、特征管道、三级缓存（Phase 3 P2 骨架）"
+
+[features]
+default = []
+# 启用 CSV 数据源（依赖 csv crate）
+csv-source = ["dep:csv"]
+# 启用 WebSocket 实时数据源
+ws-source = ["dep:tokio-tungstenite"]
+
+[dependencies]
+# 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+# 错误
+thiserror = { workspace = true }
+# 时间
+chrono = { workspace = true }
+# UUID（dataset id）
+uuid = { workspace = true }
+# 哈希（checksum）
+sha2 = { workspace = true }
+hex = "0.4"
+# 异步
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "macros", "rt-multi-thread", "time"] }
+# 并发缓存
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+# Stream trait(公开 API 需要 `Pin<Box<dyn Stream<...>>>`,so 默认启用)
+futures-core = "0.3"
+# 内部依赖
+axon-core = { workspace = true }
+
+# 可选数据源
+csv = { version = "1.3", optional = true }
+tokio-tungstenite = { version = "0.24", optional = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }

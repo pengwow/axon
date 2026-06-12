@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "recorded_at": "epoch:1718179200",
+  "model": "deepseek-chat",
+  "request": {
+    "url": "https://api.deepseek.com/v1/chat/completions",
+    "method": "POST",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "model": "deepseek-chat",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Submit a market order to buy 100 shares of AAPL at market price"
+        }
+      ],
+      "max_tokens": 1024,
+      "temperature": 0.7,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "submit_order",
+            "description": "Submit a trade order to the broker",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "symbol": {"type": "string"},
+                "side": {"type": "string", "enum": ["buy", "sell"]},
+                "quantity": {"type": "integer", "minimum": 1},
+                "order_type": {"type": "string", "enum": ["market", "limit"]},
+                "limit_price": {"type": "number"}
+              },
+              "required": ["symbol", "side", "quantity", "order_type"]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "id": "chatcmpl-fixture",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "fixture",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_order_001",
+                "type": "function",
+                "function": {
+                  "name": "submit_order",
+                  "arguments": "{\"symbol\":\"AAPL\",\"side\":\"buy\",\"quantity\":100,\"order_type\":\"market\"}"
+                }
+              }
+            ]
+          },
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 152,
+        "completion_tokens": 38,
+        "total_tokens": 190
+      }
+    }
+  }
+}

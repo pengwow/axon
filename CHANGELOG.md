@@ -567,6 +567,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 100 笔订单吞吐：~30ms（~300µs/订单）
     - TOML 配置加载：~2.5µs
     - 从 TOML 构造引擎：~1.9µs
+- **新增 `axon-data` crate 骨架** (Phase 3 P2):
+  - `Cargo.toml`: 基础依赖 + `csv-source` / `ws-source` feature
+  - `types.rs` (200 行): `DataRequest` / `Frequency` 枚举 / `SchemaField` / `DataType`
+  - `error.rs` (40 行): `DataError` 7 变体 + `DataResult` 别名
+  - `dataset.rs` (130 行): `Dataset` 结构(自动 UUID + SHA256 checksum) + 3 unit tests
+  - `traits.rs` (35 行): `DataSource` async trait(query + stream)
+  - `service.rs` (130 行): `DataService` 多源注册 + 名称查找 + L1 cache + 3 unit tests
+  - `pipeline.rs` (220 行): `Normalizer` trait + `ZScoreNormalizer` + `FeatureMatrix` + `FeaturePipeline` + 2 unit tests
+  - `sources/mod.rs` (20 行): 数据源 module 声明
+  - `sources/mock.rs` (80 行): `MockSource` + 自定义 `EmptyStream<T>`(避免 futures-util 重型依赖)
+  - `sources/csv.rs` (160 行): `CsvSource` 骨架(需 `csv-source` feature)
+  - `tests/integration_test.rs` (85 行): 5 个 smoke test
+  - 验证: `cargo test -p axon-data` → 13 passed (8 unit + 5 integration)
+  - 验证: `cargo build --workspace --tests` → 0 errors, 无回归
+  - 接入 `Cargo.toml` workspace members
+
+- **告警抑制审计** (workspace rule #4, commit 8ab90e7):
+  - 删除 `live_trading_demo.rs` `Tool` variant 上的 `#[allow(dead_code)]`(变体已在 match / Display 中使用,rustc 不报警)
+  - 删除 `openai_compat.rs` `_ensure_role_used` 死函数 + 注释(`Role` 未 import,fn 无 caller,完全冗余)
+  - 加强 `stream_complete` 的 `#[allow(unused_must_use)]` 注释(4 步分析 why 必须保留:`try_stream!` 宏返回 must_use stream)
+
 
 ### Deprecated
 

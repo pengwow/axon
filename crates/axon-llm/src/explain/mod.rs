@@ -21,5 +21,8 @@ mod types;
 pub use bridge::ExplainerBridge;
 pub use recorder::DecisionRecorder;
 pub use store::{ExplanationStore, DEFAULT_CAPACITY};
-pub use tools::{ComputeExplanationTool, QueryExplanationTool};
+pub use tools::{
+    ComputeExplanationTool, QueryExplanationTool, DEFAULT_COMPUTE_TIMEOUT_MS,
+    DEFAULT_QUERY_TIMEOUT_MS,
+};
 pub use types::{DecisionRecord, ExplainMode};

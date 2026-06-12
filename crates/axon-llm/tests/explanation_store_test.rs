@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use axon_explain::types::{ActionSnapshot, AttentionWeights, CounterfactualExplanation, Explanation};
-use axon_llm::explain::ExplanationStore;
+use axon_llm::explain::{ExplanationStore, DEFAULT_CAPACITY};
 
 fn sample_explanation(id: &str) -> Explanation {
     Explanation {
@@ -117,7 +117,7 @@ async fn test_store_latest_n_larger_than_capacity() {
 #[tokio::test]
 async fn test_store_default_uses_default_capacity() {
     let store = ExplanationStore::default();
-    assert_eq!(store.capacity(), ExplanationStore::DEFAULT_CAPACITY);
+    assert_eq!(store.capacity(), DEFAULT_CAPACITY);
 }
 
 #[tokio::test]

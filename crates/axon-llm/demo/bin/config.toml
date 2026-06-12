@@ -1,0 +1,32 @@
+# axon-llm live_trading_demo 配置
+#
+# 使用前请:
+#   1. 复制为本地配置: cp config.toml config.local.toml,然后修改
+#   2. 设置环境变量: export DEEPSEEK_API_KEY=sk-...
+#   3. 运行: cargo run -p axon-llm --example live_trading_demo --features demo
+#
+# 注意:本文件提交到 git,不要把真实 API key 写进来
+
+[backend]
+# API base URL
+#   - DeepSeek: https://api.deepseek.com/v1
+#   - OpenAI:   https://api.openai.com/v1
+#   - 本地推理服务: http://localhost:11434/v1 (Ollama) 等
+base_url = "https://api.deepseek.com/v1"
+
+# 模型名
+#   - DeepSeek 系列: deepseek-chat / deepseek-coder / deepseek-reasoner
+#   - OpenAI 系列: gpt-4o-mini / gpt-4o / gpt-3.5-turbo
+model = "deepseek-chat"
+
+# 单次请求最大输出 token
+max_tokens = 1024
+
+# 采样温度(0 = 确定性最高,1 = 创造性最高)
+temperature = 0.7
+
+# HTTP 超时(秒)
+timeout_secs = 60
+
+# 演示 query
+query = "Hi! Please introduce yourself in one short paragraph."

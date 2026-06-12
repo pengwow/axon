@@ -7,8 +7,11 @@
 //!
 //! - **`spawn_blocking` 是必须的**：axon-explain 的 `Explainer::explain` 是同步阻塞调用，
 //!   若直接在 async 上下文中调用会阻塞 tokio worker 线程。
-//! - **JoinError 映射到 `ModelNotLoaded`**：计划文档最初写 `PredictionFailed`，但
-//!   `ExplainabilityError` 没有该变体。`ModelNotLoaded` 语义最接近（"模型调用失败"）。
+//! - **JoinError 映射到 `ModelNotLoaded`**：axon-explain 当前没有 `Internal` / `JoinFailed`
+//!   变体,`ModelNotLoaded` 是最接近的("模型调用失败")。消息明确写 "task join failed"
+//!   区分于"模型未加载"语义。如未来 axon-explain 引入新变体,这里同步切换。
+//! - **业务错误上抛**：explainer 算法失败应反馈给同步调用方(如 `ComputeExplanationTool`)。
+//!   fire-and-forget 调用方(`DecisionRecorder::record_async`)自行吞掉。
 //! - **不重试**：Bridge 是 fire-and-forget 的薄包装，重试由调用方决定。
 //! - **observation 简化**：Phase 3 仅用 `query_length` 和 `query_word_count` 两个特征。
 //!   Phase 4 可让 ReActAgent 注入更丰富的 observation 字段。
@@ -55,9 +58,10 @@ impl ExplainerBridge {
         })
         .await
         .map_err(|join_err| {
-            // 任务被取消或 panic
+            // 任务被取消或 panic。语义上不是"模型未加载",但 axon-explain
+            // 当前没有更合适的变体,复用 ModelNotLoaded 并用消息区分。
             ExplainabilityError::ModelNotLoaded(format!(
-                "explainer task join failed: {}",
+                "explainer task join failed (panic or cancel): {}",
                 join_err
             ))
         })?;

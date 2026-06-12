@@ -111,10 +111,14 @@ impl ReActAgent {
         agent
     }
 
-    /// 获取解释存储引用（`None` 表示未启用 explain feature）
+    /// 获取解释存储的 Arc 克隆（`None` 表示未启用 explain feature）
+    ///
+    /// 返回 `Option<Arc<...>>` 而非 `Option<&Arc<...>>`：调用方拿到的是
+    /// **新克隆的 Arc**,可以直接 `Arc::strong_count` 计数、跨线程发送,
+    /// 无需再手动 `Arc::clone` 一次。
     #[cfg(feature = "explain")]
-    pub fn explanation_store(&self) -> Option<&Arc<crate::explain::ExplanationStore>> {
-        self.explanation_store.as_ref()
+    pub fn explanation_store(&self) -> Option<Arc<crate::explain::ExplanationStore>> {
+        self.explanation_store.as_ref().map(Arc::clone)
     }
 
     /// 注册工具
@@ -204,7 +208,7 @@ impl ReActAgent {
                             reasoning_trace: vec![step],
                             final_action: action_snapshot,
                         };
-                        recorder.record(record);
+                        recorder.record_async(record);
                     }
 
                     // 追加到上下文

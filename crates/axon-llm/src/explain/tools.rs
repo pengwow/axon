@@ -30,7 +30,7 @@ impl QueryExplanationTool {
     pub fn new(store: Arc<ExplanationStore>) -> Self {
         Self {
             store,
-            timeout: Duration::from_millis(100),
+            timeout: Duration::from_millis(DEFAULT_QUERY_TIMEOUT_MS),
         }
     }
 
@@ -112,9 +112,23 @@ pub struct ComputeInput {
     pub reasoning_trace: Vec<ReasoningStep>,
     /// 解释模式（序列化为 "ActionOnly" / "WithReasoning"）
     pub mode: ExplainMode,
+    /// 可选决策 ID（`None` 时自动生成 UUID v4）
+    ///
+    /// 调用方传入可提前持有 ID,方便后续用 `query_explanation` 查回。
+    #[serde(default)]
+    pub decision_id: Option<String>,
 }
 
-/// 现场计算解释（带 100ms 同步预算 + 超时降级）
+/// Compute 工具默认 timeout（500ms）
+///
+/// **比 Query 工具（100ms）大一个量级**：内部会 `spawn_blocking` 跑 SHAP，
+/// 单次 KernelSHAP 在 50 维特征上实测 50~500ms。100ms 几乎必然超时降级。
+pub const DEFAULT_COMPUTE_TIMEOUT_MS: u64 = 500;
+
+/// Query 工具默认 timeout（100ms，纯内存读，无需等待）
+pub const DEFAULT_QUERY_TIMEOUT_MS: u64 = 100;
+
+/// 现场计算解释（带同步预算 + 超时降级）
 pub struct ComputeExplanationTool {
     bridge: Arc<ExplainerBridge>,
     store: Arc<ExplanationStore>,
@@ -122,12 +136,12 @@ pub struct ComputeExplanationTool {
 }
 
 impl ComputeExplanationTool {
-    /// 构造（默认 100ms timeout）
+    /// 构造（默认 500ms timeout，适配 SHAP 计算）
     pub fn new(bridge: Arc<ExplainerBridge>, store: Arc<ExplanationStore>) -> Self {
         Self {
             bridge,
             store,
-            timeout: Duration::from_millis(100),
+            timeout: Duration::from_millis(DEFAULT_COMPUTE_TIMEOUT_MS),
         }
     }
 
@@ -181,6 +195,10 @@ impl Tool for ComputeExplanationTool {
                     "type": "string",
                     "enum": ["ActionOnly", "WithReasoning"],
                     "description": "解释模式"
+                },
+                "decision_id": {
+                    "type": "string",
+                    "description": "可选决策 ID（不提供则自动生成 UUID v4）。传入后可凭此 ID 用 query_explanation 查回"
                 }
             },
             "required": ["query", "final_action", "mode"]
@@ -191,19 +209,23 @@ impl Tool for ComputeExplanationTool {
         let input: ComputeInput = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(format!("JSON 解析失败: {}", e)))?;
 
-        // 构造 DecisionRecord：自动分配 UUID v4 决策 ID
-        let decision_id = uuid::Uuid::new_v4().to_string();
-        let record = DecisionRecord {
-            decision_id: decision_id.clone(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            mode: input.mode,
-            query: input.query,
-            reasoning_trace: input.reasoning_trace,
-            final_action: input.final_action,
-        };
+        // 决策 ID: 调用方提供则用,否则自动生成 UUID v4
+        let decision_id = input
+            .decision_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        // 用构造器而不是手工 struct literal（避免与 current_unix_secs 逻辑重复）
+        let mut record = DecisionRecord::new(
+            decision_id.clone(),
+            input.mode,
+            input.query,
+            input.final_action,
+        );
+        // 若提供了推理链,回填到 record（mode 已由调用方决定,不再覆盖）
+        if !input.reasoning_trace.is_empty() {
+            record.reasoning_trace = input.reasoning_trace;
+        }
 
         // 带 timeout 异步计算
         let bridge = Arc::clone(&self.bridge);

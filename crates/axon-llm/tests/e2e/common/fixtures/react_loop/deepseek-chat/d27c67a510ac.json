@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "recorded_at": "epoch:1718179200",
+  "model": "deepseek-chat",
+  "request": {
+    "url": "https://api.deepseek.com/v1/chat/completions",
+    "method": "POST",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "model": "deepseek-chat",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a trading assistant. Use the tools to gather data and place trades."
+        },
+        {
+          "role": "user",
+          "content": "What is the current price of AAPL?"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_price_001",
+              "type": "function",
+              "function": {
+                "name": "get_price",
+                "arguments": "{\"symbol\":\"AAPL\"}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_price_001",
+          "content": "{\"symbol\":\"AAPL\",\"price\":178.42,\"ts\":1718179200}"
+        }
+      ],
+      "max_tokens": 1024,
+      "temperature": 0.7,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_price",
+            "description": "Get latest price for a symbol",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "symbol": {"type": "string"}
+              },
+              "required": ["symbol"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "submit_order",
+            "description": "Submit a trade order",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "symbol": {"type": "string"},
+                "side": {"type": "string"},
+                "quantity": {"type": "integer"},
+                "order_type": {"type": "string"}
+              },
+              "required": ["symbol", "side", "quantity", "order_type"]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "id": "chatcmpl-fixture",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "fixture",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "AAPL is currently trading at $178.42. Would you like me to submit a buy order?"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 248,
+        "completion_tokens": 28,
+        "total_tokens": 276
+      }
+    }
+  }
+}

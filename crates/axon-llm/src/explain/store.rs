@@ -40,9 +40,6 @@ pub struct ExplanationStore {
 }
 
 impl ExplanationStore {
-    /// 默认容量（同时在模块级 `DEFAULT_CAPACITY` 暴露，方便在 `ExplanationStore::new` 之外引用）
-    pub const DEFAULT_CAPACITY: usize = 1000;
-
     /// 显式容量构造
     pub fn new(capacity: usize) -> Self {
         Self {

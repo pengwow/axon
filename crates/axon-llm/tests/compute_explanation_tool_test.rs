@@ -197,9 +197,11 @@ async fn test_compute_tool_missing_fields_returns_error() {
 }
 
 #[tokio::test]
-async fn test_compute_tool_default_timeout_is_100ms() {
+async fn test_compute_tool_default_timeout_is_500ms() {
+    // Compute 工具默认 500ms（适配 SHAP 计算）
+    // 详见 DEFAULT_COMPUTE_TIMEOUT_MS
     let (_, tool) = make_tool_fast();
-    assert_eq!(tool.timeout().as_millis(), 100);
+    assert_eq!(tool.timeout().as_millis(), 500);
 }
 
 #[tokio::test]

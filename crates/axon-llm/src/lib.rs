@@ -8,6 +8,8 @@
 
 pub mod agent;
 pub mod backend;
+#[cfg(feature = "backends")]
+pub mod backends;
 pub mod context;
 pub mod prompt;
 pub mod react_agent;

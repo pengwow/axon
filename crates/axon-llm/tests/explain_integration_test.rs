@@ -234,7 +234,7 @@ async fn test_async_record_does_not_block_main_loop_with_slow_explainer() {
     // 重新构造（因为 AgentConfig 不可变字段）
     let backend: Box<dyn LLMBackend> = Box::new(MockSubmitOrderBackend);
     let explainer: Arc<dyn Explainer> = Arc::new(SlowExplainer);
-    let mut agent = ReActAgent::with_explainer(backend, config, explainer);
+    let mut agent = ReActAgent::with_explainer(backend, config.clone(), explainer);
     agent.add_tool(Box::new(MockSubmitOrderTool));
     let _ = agent; // suppress unused
 
@@ -263,7 +263,7 @@ async fn test_store_contains_explanation_after_reason() {
     let mut agent = ReActAgent::with_explainer(backend, AgentConfig::default(), explainer);
     agent.add_tool(Box::new(MockSubmitOrderTool));
 
-    let store = agent.explanation_store().unwrap().clone();
+    let store = agent.explanation_store().unwrap();
 
     // 触发 1 次工具调用 → 1 条 record
     let mut config = AgentConfig::default();
@@ -272,7 +272,7 @@ async fn test_store_contains_explanation_after_reason() {
     let explainer: Arc<dyn Explainer> = Arc::new(MockExplainer);
     let mut agent = ReActAgent::with_explainer(backend, config, explainer);
     agent.add_tool(Box::new(MockSubmitOrderTool));
-    let store = agent.explanation_store().unwrap().clone();
+    let store = agent.explanation_store().unwrap();
 
     let _ = agent.reason("buy BTC").await;
     // 等异步记录
@@ -290,7 +290,7 @@ async fn test_query_explanation_tool_works_in_agent() {
     let explainer: Arc<dyn Explainer> = Arc::new(MockExplainer);
     let mut agent = ReActAgent::with_explainer(backend, AgentConfig::default(), explainer);
     agent.add_tool(Box::new(MockSubmitOrderTool));
-    let store = agent.explanation_store().unwrap().clone();
+    let store = agent.explanation_store().unwrap();
 
     // 手动塞一条解释
     use axon_explain::types::Explanation;

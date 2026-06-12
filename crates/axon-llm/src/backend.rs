@@ -22,9 +22,12 @@ pub enum LLMError {
     #[error("auth error: {0}")]
     Auth(String),
 
-    /// 限流
-    #[error("rate limited")]
-    RateLimited,
+    /// 限流(携带服务端 `Retry-After` 头秒数,可空)
+    #[error("rate limited (retry_after={retry_after:?}s)")]
+    RateLimited {
+        /// 服务端建议等待秒数(429 响应 `Retry-After` 头解析),未知则为 None
+        retry_after: Option<u64>,
+    },
 
     /// 响应解析失败
     #[error("parse error: {0}")]
@@ -51,7 +54,10 @@ pub enum LLMError {
 impl LLMError {
     /// 是否可重试
     pub fn is_retryable(&self) -> bool {
-        matches!(self, Self::Network(_) | Self::RateLimited)
+        matches!(
+            self,
+            Self::Network(_) | Self::RateLimited { .. } | Self::Backend(_)
+        )
     }
 }
 
