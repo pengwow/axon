@@ -14,6 +14,9 @@ pub mod react_agent;
 pub mod tools;
 pub mod types;
 
+#[cfg(feature = "explain")]
+pub mod explain;
+
 // ─── 公共导出 ──────────────────────────────────────────────
 
 pub use agent::{AgentConfig, AgentError, ErrorSeverity};

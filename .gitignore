@@ -13,6 +13,7 @@
 *.swo
 *~
 .DS_Store
+.trae/
 
 # 本地配置
 .env
@@ -38,3 +39,6 @@ venv/
 # 日志
 *.log
 logs/
+
+Cargo.lock
+

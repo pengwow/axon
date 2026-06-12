@@ -13,6 +13,7 @@ members = [
     "crates/axon-registry",
     "crates/axon-llm",
     "crates/axon-explain",
+    "crates/axon-ensemble",
     "crates/axon-integration-tests",
 ]
 
@@ -40,6 +41,8 @@ axon-walk-forward = { path = "crates/axon-walk-forward" }
 axon-distributed = { path = "crates/axon-distributed" }
 axon-tracker = { path = "crates/axon-tracker" }
 axon-registry = { path = "crates/axon-registry" }
+axon-explain = { path = "crates/axon-explain" }
+axon-ensemble = { path = "crates/axon-ensemble" }
 
 # 错误处理
 thiserror = "1.0"
@@ -70,6 +73,9 @@ sha2 = "0.10"
 
 # 时间
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+
+# UUID
+uuid = { version = "1.10", features = ["v4"] }
 
 # 数值类型
 rust_decimal = { version = "1.35", features = ["serde"] }

@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::agent::{AgentConfig, AgentError};
@@ -15,7 +16,7 @@ use crate::tools::Tool;
 use crate::types::{Message, Role, TokenUsage, ToolCall};
 
 /// ReAct 推理步骤
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningStep {
     /// 步骤序号
     pub step: usize,
@@ -50,6 +51,14 @@ pub struct ReActAgent {
     config: AgentConfig,
     /// 对话历史
     memory: crate::context::ConversationMemory,
+
+    // explain feature（可选）
+    /// 异步记录器（fire-and-forget）
+    #[cfg(feature = "explain")]
+    recorder: Option<crate::explain::DecisionRecorder>,
+    /// 解释存储（外部可读）
+    #[cfg(feature = "explain")]
+    explanation_store: Option<Arc<crate::explain::ExplanationStore>>,
 }
 
 impl ReActAgent {
@@ -60,7 +69,52 @@ impl ReActAgent {
             tools: HashMap::new(),
             config,
             memory: crate::context::ConversationMemory::new(),
+            #[cfg(feature = "explain")]
+            recorder: None,
+            #[cfg(feature = "explain")]
+            explanation_store: None,
         }
+    }
+
+    /// 带解释器构造（注册两个 explain Tool + 内部 Recorder）
+    ///
+    /// **仅在 `explain` feature 启用时可用**。
+    #[cfg(feature = "explain")]
+    pub fn with_explainer(
+        backend: Box<dyn LLMBackend>,
+        config: AgentConfig,
+        explainer: Arc<dyn axon_explain::traits::Explainer>,
+    ) -> Self {
+        use crate::explain::{
+            ComputeExplanationTool, DecisionRecorder, ExplainerBridge, ExplanationStore,
+            QueryExplanationTool,
+        };
+
+        let store = Arc::new(ExplanationStore::default());
+        let bridge = Arc::new(ExplainerBridge::new(explainer, Arc::clone(&store)));
+        let recorder = DecisionRecorder::new(Arc::clone(&bridge));
+
+        let mut agent = Self::new(backend, config);
+        agent.recorder = Some(recorder);
+        agent.explanation_store = Some(Arc::clone(&store));
+
+        // 注册两个 Tool
+        agent.tools.insert(
+            "compute_explanation".to_string(),
+            Arc::new(ComputeExplanationTool::new(bridge, Arc::clone(&store))),
+        );
+        agent.tools.insert(
+            "query_explanation".to_string(),
+            Arc::new(QueryExplanationTool::new(Arc::clone(&store))),
+        );
+
+        agent
+    }
+
+    /// 获取解释存储引用（`None` 表示未启用 explain feature）
+    #[cfg(feature = "explain")]
+    pub fn explanation_store(&self) -> Option<&Arc<crate::explain::ExplanationStore>> {
+        self.explanation_store.as_ref()
     }
 
     /// 注册工具
@@ -127,12 +181,31 @@ impl ReActAgent {
                         .execute_tool(tool_name, &tool_call.arguments)
                         .await?;
 
-                    steps.push(ReasoningStep {
+                    let step = ReasoningStep {
                         step: iteration,
                         thought: thought.clone(),
                         action: Some(tool_call.clone()),
                         observation: Some(observation.clone()),
-                    });
+                    };
+                    steps.push(step.clone());
+
+                    // 异步触发解释记录（fire-and-forget，不阻塞主循环）
+                    #[cfg(feature = "explain")]
+                    if let Some(recorder) = &self.recorder {
+                        let action_snapshot = snapshot_from_tool_call(&tool_call.arguments);
+                        let record = crate::explain::DecisionRecord {
+                            decision_id: uuid::Uuid::new_v4().to_string(),
+                            timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                            mode: crate::explain::ExplainMode::WithReasoning,
+                            query: query.to_string(),
+                            reasoning_trace: vec![step],
+                            final_action: action_snapshot,
+                        };
+                        recorder.record(record);
+                    }
 
                     // 追加到上下文
                     ctx.add_message(Message {
@@ -231,5 +304,25 @@ impl ReActAgent {
     /// 获取对话记忆
     pub fn memory(&self) -> &crate::context::ConversationMemory {
         &self.memory
+    }
+}
+
+/// 从 `ToolCall.arguments` JSON 解析 `ActionSnapshot`
+///
+/// 解析失败的字段用 0 / "unknown" 兜底，确保 ReAct 主循环不会因解析错误中断。
+#[cfg(feature = "explain")]
+fn snapshot_from_tool_call(arguments: &str) -> axon_explain::types::ActionSnapshot {
+    use axon_explain::types::ActionSnapshot;
+
+    let v: serde_json::Value = serde_json::from_str(arguments).unwrap_or_default();
+    ActionSnapshot {
+        position_size: v["position_size"].as_f64().unwrap_or(0.0),
+        entry_price: v["entry_price"].as_f64().unwrap_or(0.0),
+        stop_loss: v["stop_loss"].as_f64().unwrap_or(0.0),
+        take_profit: v["take_profit"].as_f64().unwrap_or(0.0),
+        order_type: v["order_type"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string(),
     }
 }
