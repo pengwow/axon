@@ -39,7 +39,7 @@ pub fn bar_schema() -> &'static Arc<Schema> {
     })
 }
 
-/// 共享工具:Bar 数组 → 按 batch_size 切分的 Vec<RecordBatch>
+/// 共享工具:Bar 数组 → 按 batch_size 切分的 `Vec<RecordBatch>`
 ///
 /// 空 bars 返回空 Vec(避免 Arrow schema 校验空 batch 报错)。
 pub fn bars_to_batches(bars: &[Bar], batch_size: usize) -> DataResult<Vec<RecordBatch>> {
@@ -94,7 +94,7 @@ pub struct BarDataset {
 }
 
 impl BarDataset {
-    /// 构造新 Bar 数据集(从 Vec<RecordBatch> 直接构造)
+    /// 构造新 Bar 数据集(从 `Vec<RecordBatch>` 直接构造)
     pub fn new(
         batches: Vec<RecordBatch>,
         source: String,
@@ -114,7 +114,7 @@ impl BarDataset {
         })
     }
 
-    /// 桥接入口:从 Vec<Bar> 一次性构造(测试用)
+    /// 桥接入口:从 `Vec<Bar>` 一次性构造(测试用)
     pub fn from_bars(
         bars: Vec<Bar>,
         source: String,

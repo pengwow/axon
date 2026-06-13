@@ -1,0 +1,27 @@
+[package]
+name = "axon-compliance"
+version = "0.0.1"
+edition = "2021"
+description = "金融交易合规审计模块"
+
+[dependencies]
+# 核心依赖
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+sha2 = "0.10"
+thiserror = "1.0"
+tracing = "0.1"
+
+# 可选依赖
+pyo3 = { version = "0.28", optional = true }
+toml = "0.8"
+
+[features]
+default = []
+python = ["pyo3"]
+
+[dev-dependencies]
+tempfile = "3.0"
+tokio = { version = "1.0", features = ["full"] }

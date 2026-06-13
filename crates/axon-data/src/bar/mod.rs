@@ -16,7 +16,7 @@ use axon_core::types::{Price, Quantity};
 pub struct BarAggregator;
 
 impl BarAggregator {
-    /// 将 Tick 按指定频率聚合为 Vec<Bar>
+    /// 将 Tick 按指定频率聚合为 `Vec<Bar>`
     ///
     /// 前提:Tick 必须按时间戳升序排列(所有 Source 保证此语义)。
     /// Frequency::Tick 直接返回 InvalidRequest 错误。

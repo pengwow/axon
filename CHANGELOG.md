@@ -693,6 +693,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 零拷贝 vs 非零拷贝:1000 行数据快约 65 倍
   - **验收**:所有测试通过,0 新 clippy 警告,workspace 全量回归无失败
 
+- **`axon-compliance` PR1 核心类型、交易记录与不可变审计日志**：
+  - **错误类型**：`ComplianceError` 9 个变体（InvalidTradeData / ConcentrationLimitBreached / LargeTradeThresholdExceeded / AuditIntegrityFailed / StorageError / SerializationError / ReportError / RegulatorFormatError / ConfigError）
+  - **核心类型**：`TradeRecord`（20+ 字段完整交易记录）、`AuditEvent`（不可变审计事件）、`ComplianceConfig`（合规配置）、`TradeFilter`（查询过滤器）、`TradeStats`（交易统计）
+  - **枚举类型**：`TradeSide` / `TradeStatus` / `OrderType` / `LiquidityType` / `AuditEventType`（16 种事件类型）
+  - **审计日志**：`AuditLog` 区块链式哈希链（SHA-256），不可篡改，支持完整性验证、时间范围查询、类型过滤
+  - **文件系统存储**：`FileStorage` JSONL 格式按日期分片持久化，支持 save/load
+  - **ComplianceModule**：核心模块，交易记录 + 自动审计事件生成 + 监管阈值检查 + 查询过滤 + 统计分析
+  - **测试**：21 个单元测试 + 1 文档测试 + 4 个集成测试，全部通过
+  - **验收**：`cargo clippy -p axon-compliance -- -D warnings` 零警告
+
 - **告警抑制审计** (workspace rule #4, commit 8ab90e7):
   - 删除 `live_trading_demo.rs` `Tool` variant 上的 `#[allow(dead_code)]`(变体已在 match / Display 中使用,rustc 不报警)
   - 删除 `openai_compat.rs` `_ensure_role_used` 死函数 + 注释(`Role` 未 import,fn 无 caller,完全冗余)
@@ -801,6 +811,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `axon-data::traits` 模块文档 `[DataService]` 不在 `traits` 模块作用域内（`DataService` 在 crate root 重新导出）→ 改为 `[`DataService`](crate::DataService)`
   - `axon-integration-tests::error_recovery_and_concurrency::test_concurrent_registry_registrations` 文档 `Arc<MemoryTracker>` 中 `<` 被识别为未闭合 HTML 标签 → 加反引号 `` `Arc<MemoryTracker>` ``
   - 验收：`RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` ✅（CI `Documentation` job 通过），`cargo clippy --workspace --all-targets -- -D warnings` ✅（零回归）
+- **`axon-data` Bar 模块 `cargo doc --workspace --no-deps` 警告修复**（PR6 新增 BarDataset 后残留 4 个 rustdoc `invalid-html-tags` 警告）：
+  - `axon-data::bar::bar_dataset::bars_to_batches` 文档 `Vec<RecordBatch>` 中 `<` 被识别为未闭合 HTML → 加反引号 `` `Vec<RecordBatch>` ``
+  - `axon-data::bar::bar_dataset::BarDataset::new` 文档同理 → 加反引号
+  - `axon-data::bar::bar_dataset::BarDataset::from_bars` 文档 `Vec<Bar>` 同理 → 加反引号
+  - `axon-data::bar::BarAggregator::aggregate_ticks` 文档 `Vec<Bar>` 同理 → 加反引号
+  - 验收：`RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` ✅ exit 0，`cargo clippy --workspace --all-targets -- -D warnings` ✅ exit 0
 
 ### Security
 

@@ -15,6 +15,7 @@ members = [
     "crates/axon-explain",
     "crates/axon-ensemble",
     "crates/axon-data",
+    "crates/axon-compliance",
     "crates/axon-integration-tests",
 ]
 
