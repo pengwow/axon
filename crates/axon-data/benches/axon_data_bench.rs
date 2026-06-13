@@ -1,7 +1,7 @@
 //! axon-data Criterion 基准测试
 //!
 //! 运行:`cargo bench -p axon-data --features csv-source --features parquet-source`
-//! 7 个 group: lru_cache / dataset_lazy / csv_parse / mock_generate / parquet_load / parquet_stream / bar_aggregate
+//! 8 个 group: lru_cache / dataset_lazy / csv_parse / mock_generate / parquet_load / parquet_stream / bar_aggregate / mmap_cache
 //!
 //! 关键约束(从项目 lessons learned 提取):
 //! - 用 black_box() 包装动态值,避免常量折叠
@@ -146,6 +146,11 @@ fn bench_dataset_lazy(c: &mut Criterion) {
     group.finish();
 }
 
+// ─── criterion_group / criterion_main 组合 ─────────────────────
+//
+// 根据 feature 组合选择不同的 benchmark group 集合。
+// mmap-cache 作为独立 group，避免与其他 feature 产生组合爆炸。
+
 #[cfg(not(feature = "parquet-source"))]
 #[cfg(not(feature = "csv-source"))]
 criterion_group!(
@@ -191,7 +196,17 @@ criterion_group!(
     bench_parquet_stream,
     bench_bar_aggregate
 );
+
+// mmap-cache 独立 group（feature-gated）
+#[cfg(feature = "mmap-cache")]
+criterion_group!(mmap_cache_benches, bench_mmap_cache);
+
+// criterion_main 入口：根据 feature 组合选择要运行的 group
+#[cfg(not(feature = "mmap-cache"))]
 criterion_main!(benches);
+
+#[cfg(feature = "mmap-cache")]
+criterion_main!(benches, mmap_cache_benches);
 
 /// group 4: MockSource::with_tick_series 生成耗时
 fn bench_mock_generate(c: &mut Criterion) {
@@ -432,6 +447,88 @@ fn bench_bar_aggregate(c: &mut Criterion) {
                     )
                     .unwrap();
                     black_box(bars.len());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+// ─── group 8: MmapCache 读写吞吐(PR7) ──────────────────────────
+
+/// group 8: MmapCache 缓存读写延迟(PR7)
+///
+/// 测试 L2 mmap 缓存的 put/get 性能，验证零拷贝读取效果。
+#[cfg(feature = "mmap-cache")]
+fn bench_mmap_cache(c: &mut Criterion) {
+    use axon_core::market::Side;
+    use axon_core::time::Timestamp;
+    use axon_core::types::{Price, Quantity};
+    use axon_data::cache::{MmapCache, MmapCacheConfig};
+
+    let mut group = c.benchmark_group("mmap_cache");
+
+    for &n_rows in &[1_000usize, 10_000, 100_000] {
+        // 准备测试数据集
+        let ticks: Vec<axon_core::market::Tick> = (0..n_rows)
+            .map(|i| {
+                axon_core::market::Tick::new(
+                    Timestamp::from_nanos(i as i64 * 1_000_000),
+                    Price::from_f64(100.0 + (i % 100) as f64),
+                    Quantity::from_f64(1.0),
+                    Side::Buy,
+                )
+            })
+            .collect();
+        let req = DataRequest::new("BENCH", Utc::now(), Utc::now(), Frequency::Tick);
+        let dataset = Dataset::from_ticks(ticks, "bench".into(), req).expect("from_ticks");
+        let key = MmapCache::cache_key("bench", "BENCH", "Tick");
+
+        // bench: put（写入缓存）
+        group.bench_with_input(BenchmarkId::new("put", n_rows), &n_rows, |b, _| {
+            b.iter_with_setup(
+                || {
+                    // 每次迭代创建新缓存，避免容量问题
+                    let dir = tempfile::tempdir().unwrap();
+                    let config =
+                        MmapCacheConfig::new(1024 * 1024 * 100, dir.path().to_str().unwrap());
+                    let cache = MmapCache::new(config).unwrap();
+                    (dir, cache)
+                },
+                |(_dir, mut cache)| {
+                    black_box(cache.put(&key, &dataset).unwrap());
+                },
+            );
+        });
+
+        // bench: get（读取缓存）— 验证零拷贝性能
+        group.bench_with_input(BenchmarkId::new("get", n_rows), &n_rows, |b, _| {
+            // 预填充缓存
+            let dir = tempfile::tempdir().unwrap();
+            let config = MmapCacheConfig::new(1024 * 1024 * 100, dir.path().to_str().unwrap());
+            let mut cache = MmapCache::new(config).unwrap();
+            cache.put(&key, &dataset).unwrap();
+
+            b.iter(|| {
+                let cached = black_box(&mut cache).get(&key);
+                black_box(cached.as_ref().map(|d| d.len()));
+            });
+        });
+
+        // bench: get_zero_copy（零拷贝读取）— 性能目标 <10µs
+        group.bench_with_input(
+            BenchmarkId::new("get_zero_copy", n_rows),
+            &n_rows,
+            |b, _| {
+                // 预填充缓存
+                let dir = tempfile::tempdir().unwrap();
+                let config = MmapCacheConfig::new(1024 * 1024 * 100, dir.path().to_str().unwrap());
+                let mut cache = MmapCache::new(config).unwrap();
+                cache.put(&key, &dataset).unwrap();
+
+                b.iter(|| {
+                    let cached = black_box(&cache).get_zero_copy(&key);
+                    black_box(cached.as_ref().map(|d| d.len()));
                 });
             },
         );

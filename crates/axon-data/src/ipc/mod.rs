@@ -186,7 +186,7 @@ impl IpcReader {
             _ => {
                 return Err(DataError::InvalidRequest(format!(
                     "unknown frequency in IPC metadata: {freq_str}"
-                )))
+                )));
             }
         };
         let req = crate::types::DataRequest::new(
@@ -199,24 +199,20 @@ impl IpcReader {
     }
 
     /// 读取 IPC 文件为通用 RecordBatch 列表(不关心具体类型)
-    pub fn read_batches(
-        path: impl AsRef<Path>,
-    ) -> DataResult<(Arc<Schema>, Vec<RecordBatch>)> {
+    pub fn read_batches(path: impl AsRef<Path>) -> DataResult<(Arc<Schema>, Vec<RecordBatch>)> {
         Self::read_batches_inner(path)
     }
 
     /// 内部实现:读取 IPC 文件
-    fn read_batches_inner(
-        path: impl AsRef<Path>,
-    ) -> DataResult<(Arc<Schema>, Vec<RecordBatch>)> {
+    fn read_batches_inner(path: impl AsRef<Path>) -> DataResult<(Arc<Schema>, Vec<RecordBatch>)> {
         let file = File::open(path)?;
         let reader = FileReader::try_new(file, None)
             .map_err(|e| DataError::Internal(format!("IPC reader init: {e}")))?;
         let schema = Arc::new(reader.schema().as_ref().clone());
         let mut batches = Vec::new();
         for batch_result in reader {
-            let batch = batch_result
-                .map_err(|e| DataError::Internal(format!("IPC read batch: {e}")))?;
+            let batch =
+                batch_result.map_err(|e| DataError::Internal(format!("IPC read batch: {e}")))?;
             batches.push(batch);
         }
         Ok((schema, batches))
@@ -316,10 +312,7 @@ mod tests {
 
         let (schema, batches) = IpcReader::read_batches(tmp.path()).unwrap();
         assert_eq!(schema.fields().len(), 4);
-        assert_eq!(
-            batches.iter().map(|b| b.num_rows()).sum::<usize>(),
-            5
-        );
+        assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 5);
     }
 
     #[test]

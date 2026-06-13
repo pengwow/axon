@@ -1,9 +1,10 @@
 //! 数据服务统一入口
 //!
-//! 缓存策略:L1 `Mutex<LruCache>` 内存缓存(默认容量 64,builder 可调)。
-//! - L1 容量:可配,默认 64 entries
-//! - 命中率:`AtomicU64` 计数,无锁并发安全
-//! - 后续可扩展 L2 mmap 磁盘 + L3 Redis 集群(feature `remote-cache`)
+//! 缓存策略:
+//! - L1 `Mutex<LruCache>` 内存缓存(默认容量 64,builder 可调)
+//! - L2 mmap 共享缓存(feature-gated: mmap-cache)
+//!
+//! 命中率:`AtomicU64` 计数,无锁并发安全
 
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,19 +28,31 @@ pub struct DataService {
     hits: Arc<AtomicU64>,
     /// 缓存未命中次数
     misses: Arc<AtomicU64>,
+    /// L2 mmap 共享缓存
+    #[cfg(feature = "mmap-cache")]
+    mmap_cache: Option<Mutex<crate::cache::MmapCache>>,
+    /// L2 缓存命中次数
+    #[cfg(feature = "mmap-cache")]
+    mmap_hits: Arc<AtomicU64>,
 }
 
 /// 缓存统计快照
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheStats {
-    /// 命中次数
+    /// L1 命中次数
     pub hits: u64,
+    /// L2 命中次数
+    pub l2_hits: u64,
     /// 未命中次数
     pub misses: u64,
-    /// 当前 entry 数
+    /// L1 当前 entry 数
     pub len: usize,
-    /// 容量上限
+    /// L1 容量上限
     pub capacity: usize,
+    /// L2 当前使用量（字节）
+    pub l2_size: usize,
+    /// L2 容量上限（字节）
+    pub l2_capacity: usize,
 }
 
 impl DataService {
@@ -66,6 +79,10 @@ impl DataService {
             capacity: cap,
             hits: Arc::new(AtomicU64::new(0)),
             misses: Arc::new(AtomicU64::new(0)),
+            #[cfg(feature = "mmap-cache")]
+            mmap_cache: None,
+            #[cfg(feature = "mmap-cache")]
+            mmap_hits: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -105,14 +122,56 @@ impl DataService {
         self
     }
 
+    /// 启用 L2 mmap 缓存(builder 风格)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use axon_data::DataService;
+    /// use axon_data::cache::MmapCacheConfig;
+    ///
+    /// let svc = DataService::new()
+    ///     .with_mmap_cache(MmapCacheConfig::new(1024 * 1024 * 100, "/tmp/axon_cache"))
+    ///     .unwrap();
+    /// ```
+    #[cfg(feature = "mmap-cache")]
+    pub fn with_mmap_cache(mut self, config: crate::cache::MmapCacheConfig) -> DataResult<Self> {
+        let cache = crate::cache::MmapCache::new(config)?;
+        self.mmap_cache = Some(Mutex::new(cache));
+        self.mmap_hits = Arc::new(AtomicU64::new(0));
+        Ok(self)
+    }
+
     /// 读取缓存统计
     pub fn cache_stats(&self) -> CacheStats {
         let cache = self.cache.lock().expect("cache mutex poisoned");
+
+        #[cfg(feature = "mmap-cache")]
+        let (l2_size, l2_capacity, l2_hits) = if let Some(ref cache) = self.mmap_cache {
+            if let Ok(cache) = cache.lock() {
+                (
+                    cache.used(),
+                    cache.capacity(),
+                    self.mmap_hits.load(Ordering::Relaxed),
+                )
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        };
+
+        #[cfg(not(feature = "mmap-cache"))]
+        let (l2_size, l2_capacity, l2_hits) = (0, 0, 0);
+
         CacheStats {
             hits: self.hits.load(Ordering::Relaxed),
+            l2_hits,
             misses: self.misses.load(Ordering::Relaxed),
             len: cache.len(),
             capacity: cache.cap().get(),
+            l2_size,
+            l2_capacity,
         }
     }
 
@@ -124,11 +183,11 @@ impl DataService {
             .map(|b| b.as_ref() as &dyn DataSource)
     }
 
-    /// 按请求查询(优先 cache hit,miss 时按 source / 第一个源查)
+    /// 按请求查询(优先 L1 → L2 → 数据源)
     pub async fn load(&self, req: &DataRequest) -> DataResult<Dataset> {
         let key = Self::cache_key(req);
 
-        // 1) cache lookup
+        // 1) L1 cache lookup
         {
             let mut cache = self.cache.lock().expect("cache mutex poisoned");
             if let Some(ds) = cache.get(&key) {
@@ -136,9 +195,29 @@ impl DataService {
                 return Ok(ds.clone());
             }
         }
+
+        // 2) L2 cache lookup (if enabled)
+        #[cfg(feature = "mmap-cache")]
+        if let Some(ref cache) = self.mmap_cache
+            && let Ok(mut cache) = cache.lock()
+        {
+            let l2_key = crate::cache::MmapCache::cache_key(
+                req.source.as_deref().unwrap_or("unknown"),
+                &req.symbol,
+                req.frequency.as_str(),
+            );
+            if let Some(ds) = cache.get(&l2_key) {
+                self.mmap_hits.fetch_add(1, Ordering::Relaxed);
+                // 写入 L1
+                let mut l1_cache = self.cache.lock().expect("cache mutex poisoned");
+                l1_cache.put(key, ds.clone());
+                return Ok(ds);
+            }
+        }
+
         self.misses.fetch_add(1, Ordering::Relaxed);
 
-        // 2) 选择数据源
+        // 3) 选择数据源
         let source: &dyn DataSource = match &req.source {
             Some(name) => self
                 .find_source(name)
@@ -152,11 +231,25 @@ impl DataService {
 
         let dataset = source.query(req).await?;
 
-        // 3) 写入 cache(可能触发 LRU 淘汰)
+        // 4) 写入 L1 cache(可能触发 LRU 淘汰)
         {
             let mut cache = self.cache.lock().expect("cache mutex poisoned");
             cache.put(key, dataset.clone());
         }
+
+        // 5) 写入 L2 cache (if enabled)
+        #[cfg(feature = "mmap-cache")]
+        if let Some(ref cache) = self.mmap_cache
+            && let Ok(mut cache) = cache.lock()
+        {
+            let l2_key = crate::cache::MmapCache::cache_key(
+                req.source.as_deref().unwrap_or("unknown"),
+                &req.symbol,
+                req.frequency.as_str(),
+            );
+            let _ = cache.put(&l2_key, &dataset);
+        }
+
         Ok(dataset)
     }
 

@@ -18,6 +18,8 @@ csv-source = ["dep:csv"]
 ws-source = ["dep:tokio-tungstenite"]
 # 启用 Parquet 数据源(PR5:arrow 已是默认依赖,只需 dep:parquet)
 parquet-source = ["dep:parquet"]
+# 启用 L2 mmap 共享缓存(PR7:跨进程共享的 Arrow IPC 缓存)
+mmap-cache = ["dep:memmap2", "dep:fs2"]
 
 [dependencies]
 # 序列化
@@ -52,6 +54,10 @@ tokio-tungstenite = { version = "0.24", optional = true }
 arrow = { workspace = true }
 # Parquet 文件读写(可继续 feature-gate;ParquetSource 模块在 parquet-source feature 启用时使用)
 parquet = { workspace = true, optional = true }
+# 共享内存(PR7:L2 mmap 缓存)
+memmap2 = { version = "0.9", optional = true }
+# 文件锁(PR7:多进程写保护)
+fs2 = { version = "0.4", optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

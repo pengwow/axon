@@ -91,6 +91,31 @@ pub enum DataError {
         /// 期望的数据类型(tick/bar)
         expected_type: String,
     },
+
+    /// 共享内存创建失败
+    #[cfg(feature = "mmap-cache")]
+    #[error("shared memory creation failed: {0}")]
+    SharedMemoryCreation(String),
+
+    /// 共享内存映射失败
+    #[cfg(feature = "mmap-cache")]
+    #[error("shared memory mapping failed: {0}")]
+    SharedMemoryMapping(String),
+
+    /// 缓存条目损坏
+    #[cfg(feature = "mmap-cache")]
+    #[error("cache entry corrupted: {0}")]
+    CacheEntryCorrupted(String),
+
+    /// 缓存容量不足
+    #[cfg(feature = "mmap-cache")]
+    #[error("cache capacity exceeded: need {needed}, available {available}")]
+    CacheCapacityExceeded {
+        /// 需要的字节数
+        needed: usize,
+        /// 可用的字节数
+        available: usize,
+    },
 }
 
 /// 统一 Result 类型别名

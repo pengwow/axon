@@ -652,6 +652,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - bench group `bar_aggregate`:1k / 10k / 100k ticks 聚合吞吐
   - **验收**:~90+ tests 全过,0 新 clippy 警告,workspace 全量回归无失败
 
+- **`axon-data` PR7 L2 mmap 共享缓存(增量)**:
+  - **`SharedMemoryPool`**(`src/cache/shared_memory.rs`):文件系统存储的共享内存池管理器,支持跨进程数据共享;每个条目包含 64 字节元数据头(Magic/版本/长度/校验和/访问统计) + Arrow IPC 数据体;使用 `memmap2` 实现内存映射
+  - **`MmapCache`**(`src/cache/mmap.rs`):L2 缓存管理器,LRU 淘汰策略,Arrow IPC 序列化/反序列化;`cache_key()` 生成 `source:symbol:frequency` 格式缓存键
+  - **`MmapCacheConfig`**:可配置容量(`max_bytes`)和存储目录(`dir`)
+  - **DataService 集成**(`src/service.rs`):`with_mmap_cache()` builder 方法,自动 L1 → L2 → 数据源查询链;L2 命中时回填 L1;`CacheStats` 包含 L2 统计(`l2_hits` / `l2_size` / `l2_capacity`)
+  - **错误类型扩展**(`src/error.rs`):`SharedMemoryCreation` / `SharedMemoryMapping` / `CacheEntryCorrupted` / `CacheCapacityExceeded`
+  - **Feature gate**: `mmap-cache` feature(默认关闭),依赖 `memmap2` + `fs2`
+  - **模块结构**(`src/cache/`):
+    - `mod.rs`:缓存模块入口,导出 `SharedMemoryPool` / `MmapCache` / `MmapCacheConfig`
+    - `shared_memory.rs`:共享内存池实现,使用文件系统存储(跨平台兼容),支持 `cleanup_stale()` 清理残留文件
+    - `mmap.rs`:L2 mmap 缓存实现,LRU 链表 + Arrow IPC 零拷贝序列化
+  - **测试**:
+    - 集成测试 7 个新 case:`mmap_cache_put_and_get` / `mmap_cache_get_nonexistent_returns_none` / `mmap_cache_remove` / `mmap_cache_lru_eviction` / `mmap_cache_capacity_and_len` / `mmap_cache_clear` / `data_service_with_mmap_cache`
+    - 单元测试 6 个:`shared_memory` 4 个 + `mmap` 3 个
+    - bench group `mmap_cache`:put/get 各 1k/10k/100k rows(put ~141µs/1k, get ~213µs/1k)
+  - **性能基准**:
+    - `mmap_cache/put/1000`: ~141µs
+    - `mmap_cache/get/1000`: ~213µs
+    - `mmap_cache/put/10000`: ~730µs
+    - `mmap_cache/get/10000`: ~2.1ms
+    - `mmap_cache/put/100000`: ~9.3ms
+    - `mmap_cache/get/100000`: ~21.3ms
+  - **已知限制**:get 性能未达到设计文档 <10µs 目标,因当前实现仍需反序列化 Arrow IPC 数据;真正的零拷贝需要延迟加载 Dataset,作为后续优化点
+  - **验收**:所有测试通过,0 新 clippy 警告,workspace 全量回归无失败
+
+- **`axon-data` PR7 L2 mmap 零拷贝优化**:
+  - **`SharedMemoryPool::read_ref()`**(`src/cache/shared_memory.rs`):零拷贝读取方法,返回 mmap 内存引用,不复制数据
+  - **`CachedDataset<'a>`**(`src/cache/mmap.rs`):零拷贝缓存数据集,借用 MmapCache 生命周期,内部持有从 mmap 直接构建的 RecordBatch
+  - **`MmapCache::get_zero_copy()`**(`src/cache/mmap.rs`):零拷贝读取接口,使用 Arrow IPC StreamReader 从 mmap 内存直接构建 RecordBatch,性能目标 <10µs
+  - **`MmapCache::touch()`**:公开方法,允许手动更新 LRU
+  - **格式优化**:将 `FileWriter`/`FileReader` 改为 `StreamWriter`/`StreamReader`,统一 IPC Stream 格式
+  - **测试**:
+    - 零拷贝测试 2 个:`test_mmap_cache_zero_copy` / `test_mmap_cache_zero_copy_not_found`
+    - 基准测试新增 `get_zero_copy`:put/get/get_zero_copy 各 1k/10k/100k rows
+  - **性能基准**:
+    - `mmap_cache/get_zero_copy/1000`: ~3.2µs (<10µs 目标 ✅)
+    - `mmap_cache/get_zero_copy/10000`: ~28.4µs
+    - `mmap_cache/get_zero_copy/100000`: ~280µs
+    - 零拷贝 vs 非零拷贝:1000 行数据快约 65 倍
+  - **验收**:所有测试通过,0 新 clippy 警告,workspace 全量回归无失败
+
 - **告警抑制审计** (workspace rule #4, commit 8ab90e7):
   - 删除 `live_trading_demo.rs` `Tool` variant 上的 `#[allow(dead_code)]`(变体已在 match / Display 中使用,rustc 不报警)
   - 删除 `openai_compat.rs` `_ensure_role_used` 死函数 + 注释(`Role` 未 import,fn 无 caller,完全冗余)

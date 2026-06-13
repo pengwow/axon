@@ -140,14 +140,8 @@ mod tests {
     fn bucket_start_hour1_alignment() {
         let hour_ns = 3_600_000_000_000_i64;
         assert_eq!(bucket_start(0, Frequency::Hour1).unwrap(), 0);
-        assert_eq!(
-            bucket_start(hour_ns - 1, Frequency::Hour1).unwrap(),
-            0
-        );
-        assert_eq!(
-            bucket_start(hour_ns, Frequency::Hour1).unwrap(),
-            hour_ns
-        );
+        assert_eq!(bucket_start(hour_ns - 1, Frequency::Hour1).unwrap(), 0);
+        assert_eq!(bucket_start(hour_ns, Frequency::Hour1).unwrap(), hour_ns);
     }
 
     #[test]
@@ -168,8 +162,7 @@ mod tests {
         let ticks: Vec<Tick> = (0..10)
             .map(|i| make_tick(i * 1_000_000_000, 100.0 + i as f64))
             .collect();
-        let bars =
-            BarAggregator::aggregate_ticks(ticks.into_iter(), Frequency::Min1).unwrap();
+        let bars = BarAggregator::aggregate_ticks(ticks.into_iter(), Frequency::Min1).unwrap();
         assert_eq!(bars.len(), 1);
         assert_eq!(bars[0].open, Price::from_f64(100.0));
         assert_eq!(bars[0].high, Price::from_f64(109.0));
@@ -181,8 +174,7 @@ mod tests {
     fn aggregate_cross_bucket_boundary() {
         // 2 个 tick 分别在不同分钟 → 2 个 bar
         let ticks = vec![make_tick(0, 100.0), make_tick(60_000_000_000, 200.0)];
-        let bars =
-            BarAggregator::aggregate_ticks(ticks.into_iter(), Frequency::Min1).unwrap();
+        let bars = BarAggregator::aggregate_ticks(ticks.into_iter(), Frequency::Min1).unwrap();
         assert_eq!(bars.len(), 2);
         assert_eq!(bars[0].close, Price::from_f64(100.0));
         assert_eq!(bars[1].open, Price::from_f64(200.0));
@@ -190,8 +182,7 @@ mod tests {
 
     #[test]
     fn aggregate_empty_ticks() {
-        let bars =
-            BarAggregator::aggregate_ticks(vec![].into_iter(), Frequency::Min1).unwrap();
+        let bars = BarAggregator::aggregate_ticks(vec![].into_iter(), Frequency::Min1).unwrap();
         assert!(bars.is_empty());
     }
 
@@ -199,8 +190,7 @@ mod tests {
     fn aggregate_all_buckets_with_ticks_produce_bars() {
         // 2 个 tick 在不同 bucket → 2 个 bar(离线场景下所有有 tick 的 bucket 都完整)
         let ticks = vec![make_tick(0, 100.0), make_tick(61_000_000_000, 200.0)];
-        let bars =
-            BarAggregator::aggregate_ticks(ticks.into_iter(), Frequency::Min1).unwrap();
+        let bars = BarAggregator::aggregate_ticks(ticks.into_iter(), Frequency::Min1).unwrap();
         assert_eq!(bars.len(), 2);
     }
 

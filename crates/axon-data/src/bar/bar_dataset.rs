@@ -290,8 +290,7 @@ mod tests {
         let req_a = DataRequest::new("A", Utc::now(), Utc::now(), Frequency::Min1);
         let req_b = req_a.clone();
         let bars = vec![make_bar(0, 100.0, 110.0, 90.0, 105.0, 1000.0)];
-        let ds1 =
-            BarDataset::from_bars(bars.clone(), "a".into(), req_a, Frequency::Min1).unwrap();
+        let ds1 = BarDataset::from_bars(bars.clone(), "a".into(), req_a, Frequency::Min1).unwrap();
         let ds2 = BarDataset::from_bars(bars, "b".into(), req_b, Frequency::Min1).unwrap();
         assert_eq!(ds1.checksum, ds2.checksum);
     }

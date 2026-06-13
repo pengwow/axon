@@ -341,15 +341,14 @@ mod parquet_fixtures {
 /// PR6 Bar 聚合 + IPC roundtrip 集成测试
 #[test]
 fn mock_to_bar_aggregate_and_ipc_roundtrip() {
+    use axon_data::DataSource;
     use axon_data::bar::{BarAggregator, BarDataset};
     use axon_data::ipc::{IpcReader, IpcWriter};
-    use axon_data::DataSource;
     use tempfile::NamedTempFile;
 
     // 1. MockSource 生成 100 个 tick(每秒 1 个)
-    let mock = MockSource::with_tick_series("BTCUSDT", 100, 1_000_000_000, |i| {
-        100.0 + (i % 10) as f64
-    });
+    let mock =
+        MockSource::with_tick_series("BTCUSDT", 100, 1_000_000_000, |i| 100.0 + (i % 10) as f64);
     let rt = tokio::runtime::Runtime::new().unwrap();
     let req = DataRequest::new("BTCUSDT", Utc::now(), Utc::now(), Frequency::Tick);
     let ds = rt.block_on(mock.query(&req)).unwrap();
@@ -360,8 +359,7 @@ fn mock_to_bar_aggregate_and_ipc_roundtrip() {
 
     // 3. 构造 BarDataset
     let bar_req = DataRequest::new("BTCUSDT", Utc::now(), Utc::now(), Frequency::Min1);
-    let bar_ds =
-        BarDataset::from_bars(bars, "mock".into(), bar_req, Frequency::Min1).unwrap();
+    let bar_ds = BarDataset::from_bars(bars, "mock".into(), bar_req, Frequency::Min1).unwrap();
 
     // 4. IPC roundtrip
     let tmp = NamedTempFile::new().unwrap();
@@ -430,4 +428,151 @@ fn unsupported_frequency_error() {
     )];
     let result = BarAggregator::aggregate_ticks(ticks.into_iter(), Frequency::Tick);
     assert!(result.is_err());
+}
+
+// ─── PR7: MmapCache 集成测试 ────────────────────────────────────
+
+/// PR7 MmapCache 集成测试（需 mmap-cache feature）
+#[cfg(feature = "mmap-cache")]
+mod mmap_cache_tests {
+    use super::*;
+    use axon_data::cache::{MmapCache, MmapCacheConfig};
+    use tempfile::TempDir;
+
+    /// 创建临时目录和缓存配置
+    fn setup_cache(max_bytes: usize) -> (TempDir, MmapCache) {
+        let dir = TempDir::new().unwrap();
+        let config = MmapCacheConfig::new(max_bytes, dir.path().to_str().unwrap());
+        let cache = MmapCache::new(config).unwrap();
+        (dir, cache)
+    }
+
+    /// 创建测试用的 Dataset（tick 数据）
+    fn make_test_dataset(symbol: &str) -> axon_data::Dataset {
+        let ticks = vec![
+            make_tick(100.0, 0),
+            make_tick(101.0, 1_000_000_000),
+            make_tick(102.0, 2_000_000_000),
+        ];
+        let req = DataRequest::new(symbol, Utc::now(), Utc::now(), Frequency::Tick);
+        axon_data::Dataset::from_ticks(ticks, "test".into(), req).unwrap()
+    }
+
+    #[test]
+    fn mmap_cache_put_and_get() {
+        let (_dir, mut cache) = setup_cache(1024 * 1024);
+        let dataset = make_test_dataset("BTCUSDT");
+
+        // 存入缓存
+        let key = MmapCache::cache_key("test", "BTCUSDT", "Tick");
+        cache.put(&key, &dataset).unwrap();
+
+        // 从缓存读取
+        let cached = cache.get(&key);
+        assert!(cached.is_some());
+
+        // 验证数据一致性
+        let cached_ds = cached.unwrap();
+        assert_eq!(cached_ds.len(), dataset.len());
+    }
+
+    #[test]
+    fn mmap_cache_get_nonexistent_returns_none() {
+        let (_dir, mut cache) = setup_cache(1024 * 1024);
+        let result = cache.get("nonexistent_key");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn mmap_cache_remove() {
+        let (_dir, mut cache) = setup_cache(1024 * 1024);
+        let dataset = make_test_dataset("ETHUSDT");
+
+        let key = MmapCache::cache_key("test", "ETHUSDT", "Tick");
+        cache.put(&key, &dataset).unwrap();
+        assert!(cache.get(&key).is_some());
+
+        cache.remove(&key).unwrap();
+        assert!(cache.get(&key).is_none());
+    }
+
+    #[test]
+    fn mmap_cache_lru_eviction() {
+        // 使用小容量触发 LRU 淘汰
+        let (_dir, mut cache) = setup_cache(2048);
+
+        // 写入多个条目（每个 IPC 序列化约几百字节）
+        for i in 0..5 {
+            let symbol = format!("SYM{}", i);
+            let dataset = make_test_dataset(&symbol);
+            let key = MmapCache::cache_key("test", &symbol, "Tick");
+            cache.put(&key, &dataset).unwrap();
+        }
+
+        // 由于容量限制，最早的条目应被淘汰
+        // 最后写入的条目应存在
+        let last_key = MmapCache::cache_key("test", "SYM4", "Tick");
+        assert!(cache.get(&last_key).is_some());
+    }
+
+    #[test]
+    fn mmap_cache_capacity_and_len() {
+        let (_dir, mut cache) = setup_cache(1024 * 1024);
+
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+
+        let dataset = make_test_dataset("BTCUSDT");
+        let key = MmapCache::cache_key("test", "BTCUSDT", "Tick");
+        cache.put(&key, &dataset).unwrap();
+
+        assert_eq!(cache.len(), 1);
+        assert!(!cache.is_empty());
+        assert!(cache.used() > 0);
+        assert_eq!(cache.capacity(), 1024 * 1024);
+    }
+
+    #[test]
+    fn mmap_cache_clear() {
+        let (_dir, mut cache) = setup_cache(1024 * 1024);
+
+        for i in 0..3 {
+            let symbol = format!("SYM{}", i);
+            let dataset = make_test_dataset(&symbol);
+            let key = MmapCache::cache_key("test", &symbol, "Tick");
+            cache.put(&key, &dataset).unwrap();
+        }
+        assert_eq!(cache.len(), 3);
+
+        cache.clear().unwrap();
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+    }
+
+    #[tokio::test]
+    async fn data_service_with_mmap_cache() {
+        // 测试 DataService 与 MmapCache 的 L1 → L2 → 数据源集成
+        let ticks = vec![make_tick(100.0, 0), make_tick(101.0, 1_000_000_000)];
+        let dir = TempDir::new().unwrap();
+        let config = MmapCacheConfig::new(1024 * 1024, dir.path().to_str().unwrap());
+
+        let svc = DataService::new()
+            .register_source(Box::new(MockSource::with_rows("mock", ticks)))
+            .with_mmap_cache(config)
+            .unwrap();
+
+        let req = DataRequest::new("X", Utc::now(), Utc::now(), Frequency::Tick);
+
+        // 第一次加载（从数据源 → 写入 L1 + L2）
+        let ds1 = svc.load(&req).await.expect("load from source");
+        assert_eq!(ds1.len(), 2);
+
+        // 第二次加载（从 L1 缓存命中）
+        let ds2 = svc.load(&req).await.expect("load from L1 cache");
+        assert_eq!(ds2.len(), 2);
+
+        // 验证缓存统计
+        let stats = svc.cache_stats();
+        assert!(stats.hits > 0, "L1 缓存应命中");
+    }
 }

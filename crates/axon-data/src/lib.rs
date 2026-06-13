@@ -29,6 +29,23 @@ pub mod sources;
 pub mod traits;
 pub mod types;
 
+/// L2 mmap 共享缓存模块（feature-gated: mmap-cache）
+///
+/// # Safety
+///
+/// 本模块使用 `memmap2` 的 unsafe API 进行内存映射。
+/// 这是必要的，因为：
+/// 1. 文件在映射期间可能被其他进程修改
+/// 2. 文件可能被截断
+///
+/// 在我们的使用场景中，这是安全的，因为：
+/// 1. 我们在写入后立即映射，不会在映射期间修改文件
+/// 2. 我们控制文件的生命周期
+/// 3. 我们使用元数据头验证数据完整性
+#[cfg(feature = "mmap-cache")]
+#[allow(unsafe_code)]
+pub mod cache;
+
 // 内部模块
 mod service;
 // Property-based fuzz tests(仅测试时编译)
