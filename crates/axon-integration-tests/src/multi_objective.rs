@@ -16,9 +16,9 @@ use axon_hpo::pareto::{compute_hypervolume, compute_pareto_front, dominates};
 use axon_hpo::trial::TrialResult;
 use axon_registry::storage::LocalStorage;
 use axon_registry::{ModelMetadata, ModelRegistry, ModelStage};
+use axon_tracker::ExperimentTracker;
 use axon_tracker::backends::MemoryTracker;
 use axon_tracker::types::ParamValue;
-use axon_tracker::ExperimentTracker;
 
 use crate::fixtures::make_trial;
 
@@ -57,13 +57,13 @@ pub async fn test_multi_objective_with_pareto_and_tracker() {
     let tracker = MemoryTracker::new();
 
     // 合成 6 个 trial 的多目标结果
-    let trial_params = vec![
-        vec![("lr".to_string(), 0.001), ("gamma".to_string(), 0.99)],  // 优
+    let trial_params = [
+        vec![("lr".to_string(), 0.001), ("gamma".to_string(), 0.99)], // 优
         vec![("lr".to_string(), 0.0005), ("gamma".to_string(), 0.95)], // 优
-        vec![("lr".to_string(), 0.002), ("gamma".to_string(), 0.90)],  // 差
+        vec![("lr".to_string(), 0.002), ("gamma".to_string(), 0.90)], // 差
         vec![("lr".to_string(), 0.0015), ("gamma".to_string(), 0.97)], // 中
         vec![("lr".to_string(), 0.0008), ("gamma".to_string(), 0.98)], // 优
-        vec![("lr".to_string(), 0.003), ("gamma".to_string(), 0.85)],  // 差
+        vec![("lr".to_string(), 0.003), ("gamma".to_string(), 0.85)], // 差
     ];
 
     let mut trials: Vec<TrialResult> = Vec::new();
@@ -79,20 +79,14 @@ pub async fn test_multi_objective_with_pareto_and_tracker() {
             axon_hpo::trial::TrialState::Complete,
         );
         // 真实试验的多目标值：替换单目标 values
-        let trial = TrialResult::new(
-            i as i32,
-            trial.params.clone(),
-            objectives.clone(),
-        )
-        .with_state(axon_hpo::trial::TrialState::Complete)
-        .with_duration(500);
+        let trial = TrialResult::new(i as i32, trial.params.clone(), objectives.clone())
+            .with_state(axon_hpo::trial::TrialState::Complete)
+            .with_duration(500);
         trials.push(trial);
 
         // 同步到 tracker
         for (k, v) in params {
-            tracker
-                .log_param(k, &ParamValue::Float(*v))
-                .unwrap();
+            tracker.log_param(k, &ParamValue::Float(*v)).unwrap();
         }
         tracker
             .log_metric("objective_sharpe", objectives[0], i)
@@ -105,10 +99,7 @@ pub async fn test_multi_objective_with_pareto_and_tracker() {
     // 计算 Pareto 前沿（多目标 maximize），使用 2D 精确算法路径
     let directions = vec![StudyDirection::Maximize, StudyDirection::Maximize];
     let pareto_front = compute_pareto_front(&trials, &directions).expect("pareto");
-    assert!(
-        !pareto_front.is_empty(),
-        "Pareto front should not be empty"
-    );
+    assert!(!pareto_front.is_empty(), "Pareto front should not be empty");
     // 至少有 2 个非支配解
     assert!(
         pareto_front.len() >= 2,
@@ -157,9 +148,8 @@ pub async fn test_multi_objective_with_pareto_and_tracker() {
 
     // 把最优解注册到 registry
     let tmp = tempfile::tempdir().unwrap();
-    let storage = Arc::new(
-        LocalStorage::new(tmp.path().join("models")).expect("create local storage"),
-    );
+    let storage =
+        Arc::new(LocalStorage::new(tmp.path().join("models")).expect("create local storage"));
     let registry = ModelRegistry::new(storage);
 
     let artifact = tmp.path().join("pareto_best.bin");

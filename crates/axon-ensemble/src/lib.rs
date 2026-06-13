@@ -10,7 +10,10 @@ pub mod traits;
 pub mod types;
 pub mod voting;
 
+pub use dynamic::DynamicWeightedEnsemble;
 pub use error::EnsembleError;
+pub use manager::{EnsembleManager, HistoryRecord};
+pub use stacking::{MetaModel, StackingEnsemble};
 pub use traits::{Ensemble, Policy, VotingStrategy};
 pub use types::{
     Action, ActionProbabilities, ActionSnapshot, ActionType, EnsembleStrategy, ModelPerformance,
@@ -18,9 +21,6 @@ pub use types::{
     StackingFeatures,
 };
 pub use voting::{HardVoteStrategy, SoftVoteStrategy, WeightedVoteStrategy};
-pub use dynamic::DynamicWeightedEnsemble;
-pub use stacking::{MetaModel, StackingEnsemble};
-pub use manager::{EnsembleManager, HistoryRecord};
 
 /// 权重和的容差（避免浮点误差）
 pub const WEIGHT_TOLERANCE: f64 = 1e-6;

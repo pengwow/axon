@@ -50,6 +50,11 @@ impl RollingVolatility {
         self.buffer.len()
     }
 
+    /// 窗口内是否没有样本
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
     /// 窗口是否已满
     pub fn is_full(&self) -> bool {
         self.buffer.len() == self.window

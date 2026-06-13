@@ -30,12 +30,18 @@ pub struct ZScoreNormalizer {
 impl ZScoreNormalizer {
     /// 构造空归一化器(未训练)
     pub fn new() -> Self {
-        Self { mean: 0.0, std: 1.0 }
+        Self {
+            mean: 0.0,
+            std: 1.0,
+        }
     }
 
     /// 构造带参归一化器
     pub fn with_params(mean: f64, std: f64) -> Self {
-        Self { mean, std: if std > 0.0 { std } else { 1.0 } }
+        Self {
+            mean,
+            std: if std > 0.0 { std } else { 1.0 },
+        }
     }
 
     /// 当前均值
@@ -54,27 +60,43 @@ impl Normalizer for ZScoreNormalizer {
         if ds.is_empty() {
             return;
         }
-        // 简化:用 price 字段训练(实际应遍历 schema)
-        let sum: f64 = ds.iter().map(|t| t.price.as_f64()).sum();
-        let mean = sum / ds.len() as f64;
-        let variance: f64 = ds
-            .iter()
-            .map(|t| {
-                let diff = t.price.as_f64() - mean;
-                diff * diff
-            })
-            .sum::<f64>()
-            / ds.len() as f64;
+        // PR5:走 batch 列式 buffer 零拷贝读(避免 Tick 中间表示)
+        let mut sum = 0.0_f64;
+        let mut sq_sum = 0.0_f64;
+        let mut n = 0usize;
+        for batch in ds.iter_batches() {
+            let px = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow::array::Float64Array>()
+                .expect("col 1 Float64Array (schema-validated)");
+            for i in 0..batch.num_rows() {
+                let v = px.value(i);
+                sum += v;
+                sq_sum += v * v;
+                n += 1;
+            }
+        }
+        let mean = sum / n as f64;
+        let variance = (sq_sum / n as f64) - mean * mean;
         self.mean = mean;
         self.std = variance.sqrt();
     }
 
     fn transform(&self, ds: &Dataset) -> FeatureMatrix {
         let mut data = Vec::with_capacity(ds.len());
-        for tick in ds.iter() {
-            let p = tick.price.as_f64();
-            let normalized = (p - self.mean) / self.std;
-            data.push(normalized as f32);
+        // PR5:列式读 price
+        for batch in ds.iter_batches() {
+            let px = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow::array::Float64Array>()
+                .expect("col 1 Float64Array (schema-validated)");
+            for i in 0..batch.num_rows() {
+                let p = px.value(i);
+                let normalized = (p - self.mean) / self.std;
+                data.push(normalized as f32);
+            }
         }
         FeatureMatrix {
             data,
@@ -123,7 +145,10 @@ pub struct FeaturePipeline {
 impl std::fmt::Debug for FeaturePipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FeaturePipeline")
-            .field("normalizer", &self.normalizer.as_ref().map(|_| "<normalizer>"))
+            .field(
+                "normalizer",
+                &self.normalizer.as_ref().map(|_| "<normalizer>"),
+            )
             .field("window", &self.window)
             .finish()
     }
@@ -163,14 +188,31 @@ impl FeaturePipeline {
         if let Some(norm) = self.normalizer.as_ref() {
             norm.transform(ds)
         } else {
-            // 无归一化器:返回原始 f32(单特征=price)
-            let data: Vec<f32> = ds.iter().map(|t| t.price.as_f64() as f32).collect();
+            // 无归一化器:返回原始 f32(单特征=price)— PR5 列式读
+            let mut data: Vec<f32> = Vec::with_capacity(ds.len());
+            for batch in ds.iter_batches() {
+                let px = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<arrow::array::Float64Array>()
+                    .expect("col 1 Float64Array (schema-validated)");
+                for i in 0..batch.num_rows() {
+                    data.push(px.value(i) as f32);
+                }
+            }
             FeatureMatrix {
                 data,
                 n_samples: ds.len(),
                 n_features: 1,
             }
         }
+    }
+}
+
+impl Default for FeaturePipeline {
+    /// 默认实现(等价于 [`FeaturePipeline::new`])
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -197,7 +239,8 @@ mod tests {
             })
             .collect();
         let req = DataRequest::new("X", Utc::now(), Utc::now(), Frequency::Tick);
-        Dataset::new(rows, vec![], "test".into(), req)
+        // PR5:走 from_ticks 桥接入口
+        Dataset::from_ticks(rows, "test".into(), req).expect("from_ticks")
     }
 
     #[test]

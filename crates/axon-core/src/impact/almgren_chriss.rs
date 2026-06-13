@@ -121,7 +121,12 @@ impl AlmgrenChrissModel {
     ///
     /// - 当 `κ × T < 1e-9` 时退化为等分执行
     /// - 当 `κ × T > 500`（sinh 溢出）时使用指数衰减近似
-    pub fn optimal_trajectory(&self, total_quantity: f64, total_time: f64, n_steps: usize) -> Vec<f64> {
+    pub fn optimal_trajectory(
+        &self,
+        total_quantity: f64,
+        total_time: f64,
+        n_steps: usize,
+    ) -> Vec<f64> {
         assert!(total_quantity > 0.0, "总数量必须为正");
         assert!(total_time > 0.0, "总执行期必须为正");
         assert!(n_steps > 0, "执行步数必须为正");
@@ -151,8 +156,8 @@ impl AlmgrenChrissModel {
             for k in 0..n_steps {
                 let t_start = k as f64 * tau;
                 let t_end = (k + 1) as f64 * tau;
-                let val = (kappa * (total_time - t_start)).sinh()
-                    - (kappa * (total_time - t_end)).sinh();
+                let val =
+                    (kappa * (total_time - t_start)).sinh() - (kappa * (total_time - t_end)).sinh();
                 raw.push(val);
             }
         }
@@ -247,9 +252,7 @@ impl AlmgrenChrissModel {
             let impact = self.epsilon * v_k;
             weighted_impact += impact * x_k;
         }
-        let avg_impact = weighted_impact / total_q;
-
-        avg_impact
+        weighted_impact / total_q
     }
 }
 
@@ -257,10 +260,10 @@ impl Default for AlmgrenChrissModel {
     /// 默认参数（中等波动、典型冲击、零风险厌恶）
     fn default() -> Self {
         Self {
-            sigma: 0.02,        // 2% 波动率（每 sqrt(time)）
-            epsilon: 0.01,      // 临时冲击系数
-            eta: 0.001,         // 永久冲击系数
-            gamma: 0.0,         // 无风险厌恶（等分执行）
+            sigma: 0.02,   // 2% 波动率（每 sqrt(time)）
+            epsilon: 0.01, // 临时冲击系数
+            eta: 0.001,    // 永久冲击系数
+            gamma: 0.0,    // 无风险厌恶（等分执行）
             arrival_price: 100.0,
         }
     }
@@ -419,7 +422,10 @@ mod tests {
         // 早期步数应 > 后期步数
         let early: f64 = traj.iter().take(3).sum();
         let late: f64 = traj.iter().rev().take(3).sum();
-        assert!(early > late, "前 3 步之和 ({early}) 应 > 后 3 步之和 ({late})");
+        assert!(
+            early > late,
+            "前 3 步之和 ({early}) 应 > 后 3 步之和 ({late})"
+        );
     }
 
     #[test]

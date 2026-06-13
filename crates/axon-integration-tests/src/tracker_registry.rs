@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use axon_registry::storage::LocalStorage;
 use axon_registry::{ModelMetadata, ModelRegistry, ModelStage};
+use axon_tracker::ExperimentTracker;
 use axon_tracker::backends::MemoryTracker;
 use axon_tracker::types::{MetricValue, ParamValue};
-use axon_tracker::ExperimentTracker;
 
 /// 提取 MetricValue::Scalar 的 f64
 #[allow(dead_code)]
@@ -37,9 +37,8 @@ fn should_promote_to_production(final_sharpe: f64, final_loss: f64) -> bool {
 pub async fn test_tracker_metrics_drive_promotion() {
     let tmp = tempfile::tempdir().unwrap();
     let tracker = MemoryTracker::new();
-    let storage = Arc::new(
-        LocalStorage::new(tmp.path().join("models")).expect("create local storage"),
-    );
+    let storage =
+        Arc::new(LocalStorage::new(tmp.path().join("models")).expect("create local storage"));
     let registry = ModelRegistry::new(storage);
 
     // 训练 3 个模型，tracker 记录各自的指标
@@ -122,9 +121,8 @@ pub async fn test_tracker_metrics_drive_promotion() {
 pub async fn test_tracker_registry_metadata_consistency() {
     let tmp = tempfile::tempdir().unwrap();
     let tracker = MemoryTracker::new();
-    let storage = Arc::new(
-        LocalStorage::new(tmp.path().join("models")).expect("create local storage"),
-    );
+    let storage =
+        Arc::new(LocalStorage::new(tmp.path().join("models")).expect("create local storage"));
     let registry = ModelRegistry::new(storage);
 
     // 训练一个模型
@@ -133,7 +131,9 @@ pub async fn test_tracker_registry_metadata_consistency() {
 
     // Tracker 记录超参
     tracker.log_param("lr", &ParamValue::Float(0.001)).unwrap();
-    tracker.log_param("batch_size", &ParamValue::Int(64)).unwrap();
+    tracker
+        .log_param("batch_size", &ParamValue::Int(64))
+        .unwrap();
     tracker.log_param("epochs", &ParamValue::Int(100)).unwrap();
 
     // 训练过程
@@ -177,7 +177,10 @@ pub async fn test_tracker_registry_metadata_consistency() {
     assert_eq!(mv.metadata.metrics.get("total_steps").copied(), Some(100.0));
 
     // 验证 hash 字段已填充
-    assert!(!mv.artifact_hash.is_empty(), "artifact_hash should be SHA-256");
+    assert!(
+        !mv.artifact_hash.is_empty(),
+        "artifact_hash should be SHA-256"
+    );
 
     println!(
         "[Tracker+Registry] metadata consistent: {} hyperparams, {} metrics",
@@ -190,9 +193,8 @@ pub async fn test_tracker_registry_metadata_consistency() {
 pub async fn test_tracker_flush_independent_from_registry() {
     let tmp = tempfile::tempdir().unwrap();
     let tracker = MemoryTracker::new();
-    let storage = Arc::new(
-        LocalStorage::new(tmp.path().join("models")).expect("create local storage"),
-    );
+    let storage =
+        Arc::new(LocalStorage::new(tmp.path().join("models")).expect("create local storage"));
     let registry = ModelRegistry::new(storage);
 
     let artifact = tmp.path().join("a.bin");
@@ -200,9 +202,7 @@ pub async fn test_tracker_flush_independent_from_registry() {
 
     // 记录 10 个指标
     for i in 0..10 {
-        tracker
-            .log_metric("loss", 1.0 / (i + 1) as f64, i)
-            .unwrap();
+        tracker.log_metric("loss", 1.0 / (i + 1) as f64, i).unwrap();
     }
 
     // 注册一个版本
@@ -222,7 +222,10 @@ pub async fn test_tracker_flush_independent_from_registry() {
     // tracker.flush() 不应影响 registry 状态
     tracker.flush().unwrap();
     let prod = registry.get_production("test").await;
-    assert!(prod.is_err(), "no production yet, flush shouldn't change this");
+    assert!(
+        prod.is_err(),
+        "no production yet, flush shouldn't change this"
+    );
 
     let staged = registry
         .list_versions("test", &Default::default())

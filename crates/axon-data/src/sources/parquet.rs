@@ -6,33 +6,30 @@
 //! 2: quantity(float64)
 //! 3: side(string) — 接受 "buy"/"sell" 或 "b"/"s"
 //!
-//! 与 `CsvSource` 行为对齐:
-//! - 同样的 `Vec<Tick>` 输出
-//! - 同样的 `Frequency::Tick` 约束(其他频率返回 `InvalidRequest`)
-//! - 同样的 `Box::leak` 模式用于稳定 schema 切片
-//!
-//! 加载策略:全量加载(与 `CsvSource` 一致),后续 PR4+ 可升级为流式 row group 读取。
+//! PR5 列式升级:
+//! - `query()`:全量加载到 `Vec<RecordBatch>`,零拷贝(PR3 `batch_to_ticks` 已删除)
+//! - `stream()`:真流式,`spawn_blocking` 启动后台 reader + mpsc channel
+//!   推送 `RecordBatch`,内存复杂度 O(batch_size)(PR4 + PR5)
+//! - `compute_checksum` 沿用 PR1 行式格式,跨 PR 字节级一致
 
 use std::fs::File;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 use futures_core::Stream;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use tokio::sync::mpsc;
 
-use arrow::array::{Array, Float64Array, Int64Array, StringArray};
 use arrow::datatypes::DataType as ArrowType;
 use arrow::record_batch::RecordBatch;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use crate::dataset::Dataset;
 use crate::error::{CsvLocation, DataError, DataResult};
 use crate::traits::DataSource;
 use crate::types::{DataRequest, Frequency, SchemaField};
-
-use axon_core::market::{Side, Tick};
-use axon_core::time::Timestamp;
-use axon_core::types::{Price, Quantity};
 
 /// 默认 batch size(每批 Arrow RecordBatch 包含的行数)
 const DEFAULT_BATCH_SIZE: usize = 1024;
@@ -40,7 +37,7 @@ const DEFAULT_BATCH_SIZE: usize = 1024;
 /// Parquet 数据源
 ///
 /// 读取 `.parquet` 文件,严格校验 4 列 schema(按位置)后,
-/// 转换为 `Vec<Tick>` 并通过 `Dataset` 暴露。
+/// 持有 `Vec<RecordBatch>` 并通过 `Dataset` 暴露。
 pub struct ParquetSource {
     name: String,
     path: PathBuf,
@@ -65,7 +62,7 @@ impl ParquetSource {
     }
 
     /// 验证 schema:严格 4 列(int64, f64, f64, utf8)
-    fn validate_schema(schema: &std::sync::Arc<arrow::datatypes::Schema>) -> DataResult<()> {
+    fn validate_schema(schema: &Arc<arrow::datatypes::Schema>) -> DataResult<()> {
         let fields = schema.fields();
         if fields.len() < 4 {
             return Err(DataError::SchemaMismatch {
@@ -100,7 +97,7 @@ impl ParquetSource {
         ]
     }
 
-    /// 内部同步加载逻辑(在 `spawn_blocking` 中运行)
+    /// 内部同步加载逻辑(在 `spawn_blocking` 中运行)— PR5:返回 `Vec<RecordBatch>` 列表
     fn load_sync(&self, req: &DataRequest) -> DataResult<Dataset> {
         // 1. 打开文件
         let file = File::open(&self.path).map_err(|e| {
@@ -108,8 +105,8 @@ impl ParquetSource {
         })?;
 
         // 2. 构造 builder 并校验 schema
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
-            DataError::CorruptData {
+        let builder =
+            ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| DataError::CorruptData {
                 expected: "valid parquet file".into(),
                 actual: format!("{e}"),
                 location: Some(CsvLocation {
@@ -117,8 +114,7 @@ impl ParquetSource {
                     line: 0,
                     column: None,
                 }),
-            }
-        })?;
+            })?;
         let schema = builder.schema().clone();
         Self::validate_schema(&schema)?;
 
@@ -136,121 +132,121 @@ impl ParquetSource {
                 }),
             })?;
 
-        let mut rows: Vec<Tick> = Vec::new();
+        let mut batches: Vec<RecordBatch> = Vec::new();
+        let mut total_rows = 0usize;
         for batch_result in batch_reader {
             let batch = batch_result.map_err(|e| DataError::CorruptData {
                 expected: "valid record batch".into(),
                 actual: format!("{e}"),
                 location: Some(CsvLocation {
                     file: self.path.to_string_lossy().into_owned(),
-                    line: rows.len(),
+                    line: total_rows,
                     column: None,
                 }),
             })?;
-            rows.extend(batch_to_ticks(&batch)?);
+            total_rows += batch.num_rows();
+            batches.push(batch);
         }
 
         // 4. Frequency 校验(与 CsvSource 一致)
-        if req.frequency != Frequency::Tick && !rows.is_empty() {
+        if req.frequency != Frequency::Tick && !batches.is_empty() {
             return Err(DataError::InvalidRequest(format!(
                 "ParquetSource 骨架仅支持 Tick 频率,收到 {:?}",
                 req.frequency
             )));
         }
 
-        Ok(Dataset::new(
-            rows,
-            Self::schema_fields(),
-            self.name.clone(),
-            req.clone(),
-        ))
+        // 5. PR5:直接走 RecordBatch 列表(零拷贝)— 不再过 batch_to_ticks
+        Dataset::new(batches, self.name.clone(), req.clone())
     }
-}
 
-/// `RecordBatch` (4 列) → `Vec<Tick>`
-///
-/// 列下转型失败返回 `CorruptData`(schema 已校验过,理论上不会发生,
-/// 但保留防护以防上游 caller 误用)。
-fn batch_to_ticks(batch: &RecordBatch) -> DataResult<Vec<Tick>> {
-    let ts_col = batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<Int64Array>()
-        .ok_or_else(|| DataError::CorruptData {
-            expected: "Int64Array for column 0 (timestamp)".into(),
-            actual: format!("got {:?}", batch.column(0).data_type()),
-            location: Some(CsvLocation {
-                file: "parquet".into(),
-                line: 0,
-                column: Some("timestamp".into()),
-            }),
-        })?;
-    let price_col = batch
-        .column(1)
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .ok_or_else(|| DataError::CorruptData {
-            expected: "Float64Array for column 1 (price)".into(),
-            actual: format!("got {:?}", batch.column(1).data_type()),
-            location: Some(CsvLocation {
-                file: "parquet".into(),
-                line: 0,
-                column: Some("price".into()),
-            }),
-        })?;
-    let qty_col = batch
-        .column(2)
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .ok_or_else(|| DataError::CorruptData {
-            expected: "Float64Array for column 2 (quantity)".into(),
-            actual: format!("got {:?}", batch.column(2).data_type()),
-            location: Some(CsvLocation {
-                file: "parquet".into(),
-                line: 0,
-                column: Some("quantity".into()),
-            }),
-        })?;
-    let side_col = batch
-        .column(3)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| DataError::CorruptData {
-            expected: "StringArray for column 3 (side)".into(),
-            actual: format!("got {:?}", batch.column(3).data_type()),
-            location: Some(CsvLocation {
-                file: "parquet".into(),
-                line: 0,
-                column: Some("side".into()),
-            }),
-        })?;
-
-    let n = batch.num_rows();
-    let mut ticks = Vec::with_capacity(n);
-    for i in 0..n {
-        let side = match side_col.value(i).to_ascii_lowercase().as_str() {
-            "buy" | "b" => Side::Buy,
-            "sell" | "s" => Side::Sell,
-            other => {
-                return Err(DataError::CorruptData {
-                    expected: "buy/sell".into(),
-                    actual: format!("row {i}: '{other}'"),
-                    location: Some(CsvLocation {
-                        file: "parquet".into(),
-                        line: i,
-                        column: Some("side".into()),
-                    }),
-                })
+    /// 流式同步加载(在 `spawn_blocking` 中运行)— PR5:逐 batch 推送 RecordBatch
+    ///
+    /// 行为契约(沿用 PR4):
+    /// - caller 持有 `RowGroupStream`,从 `poll_next` 拉取 `RecordBatch`
+    /// - 后台 `spawn_blocking` task 通过 `tx.blocking_send` 推 `RecordBatch`
+    /// - caller 提前中断(`RowGroupStream` drop)→ rx drop → 后台 sender.send 返回 Err → task 自然退出
+    /// - 错误通过 `tx.blocking_send(Err(...))` 推给 caller,然后退出
+    fn stream_sync(self, tx: mpsc::Sender<DataResult<RecordBatch>>) -> DataResult<()> {
+        // 1. 打开文件
+        let file = match File::open(&self.path) {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(DataError::InvalidRequest(format!(
+                    "open {}: {}",
+                    self.path.display(),
+                    e
+                ))));
+                return Ok(());
             }
         };
-        ticks.push(Tick::new(
-            Timestamp::from_nanos(ts_col.value(i)),
-            Price::from_f64(price_col.value(i)),
-            Quantity::from_f64(qty_col.value(i)),
-            side,
-        ));
+
+        // 2. 构造 builder
+        let builder = match ParquetRecordBatchReaderBuilder::try_new(file) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(DataError::CorruptData {
+                    expected: "valid parquet file".into(),
+                    actual: format!("{e}"),
+                    location: Some(CsvLocation {
+                        file: self.path.to_string_lossy().into_owned(),
+                        line: 0,
+                        column: None,
+                    }),
+                }));
+                return Ok(());
+            }
+        };
+
+        // 3. 校验 schema
+        let schema = builder.schema().clone();
+        if let Err(e) = Self::validate_schema(&schema) {
+            let _ = tx.blocking_send(Err(e));
+            return Ok(());
+        }
+
+        // 4. 构造 batch reader
+        let batch_reader = match builder.with_batch_size(self.batch_size).build() {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(DataError::CorruptData {
+                    expected: "record batch reader".into(),
+                    actual: format!("{e}"),
+                    location: Some(CsvLocation {
+                        file: self.path.to_string_lossy().into_owned(),
+                        line: 0,
+                        column: None,
+                    }),
+                }));
+                return Ok(());
+            }
+        };
+
+        // 5. 逐 batch 解码并推送(PR5:推 batch 而非逐行 tick)
+        for batch_result in batch_reader {
+            match batch_result {
+                Ok(batch) => {
+                    // caller 中断时 send 返回 Err,直接退出
+                    if tx.blocking_send(Ok(batch)).is_err() {
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(DataError::CorruptData {
+                        expected: "valid record batch".into(),
+                        actual: format!("{e}"),
+                        location: Some(CsvLocation {
+                            file: self.path.to_string_lossy().into_owned(),
+                            line: 0,
+                            column: None,
+                        }),
+                    }));
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
     }
-    Ok(ticks)
 }
 
 #[async_trait]
@@ -288,46 +284,105 @@ impl DataSource for ParquetSource {
 
     async fn stream(
         &self,
-        req: &DataRequest,
-    ) -> DataResult<Pin<Box<dyn Stream<Item = DataResult<Tick>> + Send>>> {
-        let dataset = self.query(req).await?;
-        let stream = futures::stream::iter(dataset.rows.into_iter().map(Ok));
-        Ok(Box::pin(stream))
+        _req: &DataRequest,
+    ) -> DataResult<Pin<Box<dyn Stream<Item = DataResult<RecordBatch>> + Send>>> {
+        let path = self.path.clone();
+        let name = self.name.clone();
+        let batch_size = self.batch_size;
+
+        // 1. 创建有界 channel(容量 = batch_size,提供 backpressure)
+        let (tx, rx) = mpsc::channel::<DataResult<RecordBatch>>(batch_size.max(1));
+
+        // 2. spawn_blocking 启动后台 reader
+        let join = tokio::task::spawn_blocking(move || -> DataResult<()> {
+            let src = ParquetSource {
+                name,
+                path,
+                batch_size,
+            };
+            src.stream_sync(tx)
+        });
+
+        // 3. 包装成 Stream(PR5:Item = RecordBatch)
+        let stream_impl = RowGroupStream {
+            rx,
+            join: Some(join),
+        };
+        Ok(Box::pin(stream_impl))
+    }
+}
+
+/// 内部流式结构:持有 mpsc receiver + spawn_blocking JoinHandle
+/// PR5:`Item = RecordBatch`(而非 PR4 的 `Tick`)
+struct RowGroupStream {
+    rx: mpsc::Receiver<DataResult<RecordBatch>>,
+    join: Option<tokio::task::JoinHandle<DataResult<()>>>,
+}
+
+impl Stream for RowGroupStream {
+    type Item = DataResult<RecordBatch>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut rx_pin = Pin::new(&mut self.rx);
+        match rx_pin.as_mut().poll_recv(cx) {
+            Poll::Ready(Some(item)) => Poll::Ready(Some(item)),
+            Poll::Ready(None) => {
+                // channel 关闭(后台 task 退出)→ 丢 handle 让 task 自然结束
+                // 注意:不在 poll_next 内 block_on(避免 re-enter panic);
+                // 错误已经通过 tx.blocking_send(Err(...)) 推给 caller 或从未发生
+                if let Some(handle) = self.join.take() {
+                    drop(handle);
+                }
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl Drop for RowGroupStream {
+    fn drop(&mut self) {
+        // rx 在 struct 内,先随 self drop 而 drop(顺序:Drop 字段)
+        // 后台 sender.send 返回 Err → stream_sync 退出 → task 完成
+        // join handle 留给 tokio runtime 自动清理(未 await 的 task)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    // 单元测试覆盖由 tests/integration_test.rs 下的 parquet_fixtures 模块承担
-    // 这里只放纯算法测试(无 IO)
+    // 单元测试覆盖 validate_schema 纯函数(无 IO)
     use super::*;
-    use arrow::array::Int64Array;
-    use std::sync::Arc;
 
-    fn make_buy_int64_array(vals: Vec<i64>) -> Int64Array {
-        Int64Array::from(vals)
+    #[test]
+    fn validate_schema_rejects_wrong_type() {
+        let schema = Arc::new(arrow::datatypes::Schema::new(vec![
+            arrow::datatypes::Field::new("ts", ArrowType::Int64, false),
+            arrow::datatypes::Field::new("px", ArrowType::Int32, false), // 错!
+            arrow::datatypes::Field::new("qty", ArrowType::Float64, false),
+            arrow::datatypes::Field::new("side", ArrowType::Utf8, false),
+        ]));
+        let res = ParquetSource::validate_schema(&schema);
+        assert!(matches!(res, Err(DataError::SchemaMismatch { .. })));
     }
 
     #[test]
-    fn batch_to_ticks_returns_empty_for_empty_batch() {
-        // 构造 4 列空 batch
+    fn validate_schema_rejects_too_few_columns() {
+        let schema = Arc::new(arrow::datatypes::Schema::new(vec![
+            arrow::datatypes::Field::new("ts", ArrowType::Int64, false),
+        ]));
+        let res = ParquetSource::validate_schema(&schema);
+        assert!(matches!(res, Err(DataError::SchemaMismatch { .. })));
+    }
+
+    #[test]
+    fn validate_schema_accepts_correct_4_columns() {
         let schema = Arc::new(arrow::datatypes::Schema::new(vec![
             arrow::datatypes::Field::new("ts", ArrowType::Int64, false),
             arrow::datatypes::Field::new("px", ArrowType::Float64, false),
             arrow::datatypes::Field::new("qty", ArrowType::Float64, false),
             arrow::datatypes::Field::new("side", ArrowType::Utf8, false),
         ]));
-        let batch = RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(make_buy_int64_array(vec![])),
-                Arc::new(Float64Array::from(Vec::<f64>::new())),
-                Arc::new(Float64Array::from(Vec::<f64>::new())),
-                Arc::new(StringArray::from(Vec::<&str>::new())),
-            ],
-        )
-        .unwrap();
-        let ticks = batch_to_ticks(&batch).expect("empty batch ok");
-        assert!(ticks.is_empty());
+        let res = ParquetSource::validate_schema(&schema);
+        assert!(res.is_ok());
     }
 }

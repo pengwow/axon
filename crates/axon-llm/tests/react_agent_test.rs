@@ -9,10 +9,10 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use axon_llm::ReActAgent;
 use axon_llm::agent::{AgentConfig, AgentError, ErrorSeverity};
 use axon_llm::tools::{Tool, ToolError};
 use axon_llm::{LLMBackend, LLMResponse, Message, TokenUsage, ToolCall};
-use axon_llm::ReActAgent;
 
 // ─── 测试工具：EchoTool ─────────────────────────────────────
 
@@ -20,15 +20,20 @@ struct EchoTool;
 
 #[async_trait::async_trait]
 impl Tool for EchoTool {
-    fn name(&self) -> &'static str { "echo" }
-    fn description(&self) -> &'static str { "回显输入" }
+    fn name(&self) -> &'static str {
+        "echo"
+    }
+    fn description(&self) -> &'static str {
+        "回显输入"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]})
     }
     async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
         let v: serde_json::Value = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
-        let text = v["text"].as_str()
+        let text = v["text"]
+            .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("缺少 text".into()))?;
         Ok(format!("echo: {}", text))
     }
@@ -43,10 +48,16 @@ impl LLMBackend for TextOnlyBackend {
     async fn complete(&self, _: &[Message]) -> Result<LLMResponse, axon_llm::backend::LLMError> {
         Ok(LLMResponse::text("最终答案", TokenUsage::new(5, 3)))
     }
-    async fn complete_with_tools(&self, _: &[Message], _: &[axon_llm::backend::ToolDefinition]) -> Result<LLMResponse, axon_llm::backend::LLMError> {
+    async fn complete_with_tools(
+        &self,
+        _: &[Message],
+        _: &[axon_llm::backend::ToolDefinition],
+    ) -> Result<LLMResponse, axon_llm::backend::LLMError> {
         Ok(LLMResponse::text("最终答案", TokenUsage::new(5, 3)))
     }
-    fn context_window_size(&self) -> usize { 4096 }
+    fn context_window_size(&self) -> usize {
+        4096
+    }
 }
 
 // ─── Mock：触发一轮工具调用后返回文本 ──────────────────────────
@@ -57,7 +68,9 @@ struct OneToolThenTextBackend {
 
 impl OneToolThenTextBackend {
     fn new() -> Self {
-        Self { called: AtomicBool::new(false) }
+        Self {
+            called: AtomicBool::new(false),
+        }
     }
 }
 
@@ -66,18 +79,28 @@ impl LLMBackend for OneToolThenTextBackend {
     async fn complete(&self, _: &[Message]) -> Result<LLMResponse, axon_llm::backend::LLMError> {
         unreachable!("只使用 complete_with_tools")
     }
-    async fn complete_with_tools(&self, _: &[Message], _: &[axon_llm::backend::ToolDefinition]) -> Result<LLMResponse, axon_llm::backend::LLMError> {
+    async fn complete_with_tools(
+        &self,
+        _: &[Message],
+        _: &[axon_llm::backend::ToolDefinition],
+    ) -> Result<LLMResponse, axon_llm::backend::LLMError> {
         // 第一轮：工具调用；第二轮：最终答案
         if !self.called.swap(true, Ordering::SeqCst) {
             Ok(LLMResponse::tool_calls(
-                vec![ToolCall { id: "c1".into(), function_name: "echo".into(), arguments: r#"{"text":"hello"}"#.into() }],
+                vec![ToolCall {
+                    id: "c1".into(),
+                    function_name: "echo".into(),
+                    arguments: r#"{"text":"hello"}"#.into(),
+                }],
                 TokenUsage::new(10, 5),
             ))
         } else {
             Ok(LLMResponse::text("工具执行成功", TokenUsage::new(8, 2)))
         }
     }
-    fn context_window_size(&self) -> usize { 4096 }
+    fn context_window_size(&self) -> usize {
+        4096
+    }
 }
 
 // ─── Mock：始终返回工具调用（触发最大轮次限制） ────────────────────
@@ -89,13 +112,23 @@ impl LLMBackend for InfiniteToolBackend {
     async fn complete(&self, _: &[Message]) -> Result<LLMResponse, axon_llm::backend::LLMError> {
         unreachable!("只使用 complete_with_tools")
     }
-    async fn complete_with_tools(&self, _: &[Message], _: &[axon_llm::backend::ToolDefinition]) -> Result<LLMResponse, axon_llm::backend::LLMError> {
+    async fn complete_with_tools(
+        &self,
+        _: &[Message],
+        _: &[axon_llm::backend::ToolDefinition],
+    ) -> Result<LLMResponse, axon_llm::backend::LLMError> {
         Ok(LLMResponse::tool_calls(
-            vec![ToolCall { id: "x".into(), function_name: "echo".into(), arguments: r#"{"text":"x"}"#.into() }],
+            vec![ToolCall {
+                id: "x".into(),
+                function_name: "echo".into(),
+                arguments: r#"{"text":"x"}"#.into(),
+            }],
             TokenUsage::new(5, 2),
         ))
     }
-    fn context_window_size(&self) -> usize { 4096 }
+    fn context_window_size(&self) -> usize {
+        4096
+    }
 }
 
 // ─── Mock：返回未授权工具 ────────────────────────────────────
@@ -107,13 +140,23 @@ impl LLMBackend for UnauthorizedToolBackend {
     async fn complete(&self, _: &[Message]) -> Result<LLMResponse, axon_llm::backend::LLMError> {
         unreachable!("只使用 complete_with_tools")
     }
-    async fn complete_with_tools(&self, _: &[Message], _: &[axon_llm::backend::ToolDefinition]) -> Result<LLMResponse, axon_llm::backend::LLMError> {
+    async fn complete_with_tools(
+        &self,
+        _: &[Message],
+        _: &[axon_llm::backend::ToolDefinition],
+    ) -> Result<LLMResponse, axon_llm::backend::LLMError> {
         Ok(LLMResponse::tool_calls(
-            vec![ToolCall { id: "x".into(), function_name: "dangerous_tool".into(), arguments: "{}".into() }],
+            vec![ToolCall {
+                id: "x".into(),
+                function_name: "dangerous_tool".into(),
+                arguments: "{}".into(),
+            }],
             TokenUsage::new(5, 2),
         ))
     }
-    fn context_window_size(&self) -> usize { 4096 }
+    fn context_window_size(&self) -> usize {
+        4096
+    }
 }
 
 // ─── 测试：最终答案路径 ──────────────────────────────────────
@@ -146,7 +189,10 @@ async fn test_agent_accumulates_token_usage() {
 
 #[tokio::test]
 async fn test_agent_executes_tool_and_continues() {
-    let mut agent = ReActAgent::new(Box::new(OneToolThenTextBackend::new()), AgentConfig::default());
+    let mut agent = ReActAgent::new(
+        Box::new(OneToolThenTextBackend::new()),
+        AgentConfig::default(),
+    );
     agent.add_tool(Box::new(EchoTool));
 
     let resp = agent.reason("分析").await.unwrap();
@@ -157,7 +203,10 @@ async fn test_agent_executes_tool_and_continues() {
 /// 工具执行结果必须出现在推理跟踪中
 #[tokio::test]
 async fn test_agent_traces_tool_observation() {
-    let mut agent = ReActAgent::new(Box::new(OneToolThenTextBackend::new()), AgentConfig::default());
+    let mut agent = ReActAgent::new(
+        Box::new(OneToolThenTextBackend::new()),
+        AgentConfig::default(),
+    );
     agent.add_tool(Box::new(EchoTool));
 
     let resp = agent.reason("分析").await.unwrap();
@@ -172,8 +221,7 @@ async fn test_agent_traces_tool_observation() {
 
 #[tokio::test]
 async fn test_agent_rejects_unauthorized_tool() {
-    let config = AgentConfig::new()
-        .with_allowed_tools(vec!["echo".into()]); // 只允许 echo
+    let config = AgentConfig::new().with_allowed_tools(vec!["echo".into()]); // 只允许 echo
     let mut agent = ReActAgent::new(Box::new(UnauthorizedToolBackend), config);
     agent.add_tool(Box::new(EchoTool));
 

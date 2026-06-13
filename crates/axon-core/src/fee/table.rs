@@ -4,7 +4,6 @@
 //! 以及 Binance / Coinbase / Kraken 三个常用交易所的默认费率表。
 
 use rust_decimal::Decimal;
-use rust_decimal::prelude::FromPrimitive;
 use rust_decimal_macros::dec;
 
 #[cfg(feature = "serde")]
@@ -202,6 +201,7 @@ impl FeeTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rust_decimal::prelude::FromPrimitive;
 
     #[test]
     fn test_binance_default_tier_count() {
@@ -561,8 +561,7 @@ mod tests {
             handles.push(thread::spawn(move || {
                 for j in 0..PER_THREAD {
                     // 不同 thread 查询不同 volume 段（运行时构造 Decimal）
-                    let volume =
-                        Decimal::from_u64((thread_id * 10_000 + j * 10) as u64).unwrap();
+                    let volume = Decimal::from_u64((thread_id * 10_000 + j * 10) as u64).unwrap();
                     let notional = dec!(1_000);
                     let maker = t.maker_fee(notional, volume).expect("maker");
                     let taker = t.taker_fee(notional, volume).expect("taker");
@@ -584,6 +583,8 @@ mod tests {
         use std::thread;
 
         const N_THREADS: usize = 100;
+        // 预留 PER_THREAD 容量以备后续压测扩展(随每个线程执行次数可调)
+        #[allow(dead_code)]
         const PER_THREAD: usize = 100;
 
         let table = Arc::new(FeeTable::binance_default());
@@ -658,16 +659,16 @@ mod tests {
 
         let table = Arc::new(FeeTable::binance_default());
         let boundary_volumes = [
-            dec!(0),                 // 最低档
-            dec!(999_999),           // VIP 1 - 1
-            dec!(1_000_000),         // VIP 1
-            dec!(4_999_999),         // VIP 2 - 1
-            dec!(5_000_000),         // VIP 2
-            dec!(9_999_999),         // VIP 3 - 1
-            dec!(10_000_000),        // VIP 3
-            dec!(99_999_999),        // VIP 9 - 1
-            dec!(100_000_000),       // VIP 9
-            dec!(1_000_000_000),     // 高于最大档
+            dec!(0),             // 最低档
+            dec!(999_999),       // VIP 1 - 1
+            dec!(1_000_000),     // VIP 1
+            dec!(4_999_999),     // VIP 2 - 1
+            dec!(5_000_000),     // VIP 2
+            dec!(9_999_999),     // VIP 3 - 1
+            dec!(10_000_000),    // VIP 3
+            dec!(99_999_999),    // VIP 9 - 1
+            dec!(100_000_000),   // VIP 9
+            dec!(1_000_000_000), // 高于最大档
         ];
 
         let mut handles = Vec::with_capacity(N_THREADS);

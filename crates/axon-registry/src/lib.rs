@@ -22,4 +22,6 @@ pub use filter::VersionFilter;
 pub use registry::ModelRegistry;
 pub use signature::{DataType, ModelSignature, SignatureField};
 pub use storage::{LocalStorage, StorageBackendTrait};
-pub use types::{ModelMetadata, ModelStage, ModelVersion, SemVer, StorageBackend, StorageObject, UploadResult};
+pub use types::{
+    ModelMetadata, ModelStage, ModelVersion, SemVer, StorageBackend, StorageObject, UploadResult,
+};

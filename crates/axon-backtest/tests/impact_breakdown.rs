@@ -15,15 +15,17 @@ use axon_backtest::impact::ImpactedMatchingEngine;
 use axon_core::impact::{ImpactModel, LinearImpactModel, PowerLawImpactModel};
 use axon_core::market::Side;
 use axon_core::order::{Order, OrderType, TimeInForce};
-use axon_core::types::{Price, Quantity, Symbol};
 use axon_core::time::Timestamp;
+use axon_core::types::{Price, Quantity, Symbol};
 
 fn make_limit(id: u64, side: Side, price: f64, qty: f64) -> Order {
     Order::new(
         id,
         Symbol::from("BTC-USDT"),
         side,
-        OrderType::Limit { price: Price::from_f64(price) },
+        OrderType::Limit {
+            price: Price::from_f64(price),
+        },
         Quantity::from_f64(qty),
         TimeInForce::GTC,
     )
@@ -39,12 +41,19 @@ fn refill_ask_book(engine: &mut ImpactedMatchingEngine, start_id: u64, n: usize,
 
 fn time<F: FnMut() -> R, R>(label: &str, n_iter: usize, mut f: F) {
     // warmup
-    for _ in 0..1000 { let _ = f(); }
+    for _ in 0..1000 {
+        let _ = f();
+    }
     let start = Instant::now();
-    for _ in 0..n_iter { let _ = f(); }
+    for _ in 0..n_iter {
+        let _ = f();
+    }
     let elapsed = start.elapsed();
     let per_iter_ns = elapsed.as_nanos() as f64 / n_iter as f64;
-    println!("  {label:<30}  {per_iter_ns:>10.2} ns/iter  ({n_iter} iter in {:?})", elapsed);
+    println!(
+        "  {label:<30}  {per_iter_ns:>10.2} ns/iter  ({n_iter} iter in {:?})",
+        elapsed
+    );
 }
 
 fn scenario_1_submit_breakdown() {
@@ -118,12 +127,20 @@ fn scenario_5_impact_models_compare() {
     let snap = engine.snapshot_with_offset(Timestamp::from_nanos(0));
 
     time("linear compute_impact", 1_000_000, || {
-        let i = m_linear.compute_impact(black_box(Quantity::from_f64(5.0)), black_box(Side::Buy), black_box(&snap));
+        let i = m_linear.compute_impact(
+            black_box(Quantity::from_f64(5.0)),
+            black_box(Side::Buy),
+            black_box(&snap),
+        );
         black_box(i);
     });
 
     time("power_law compute_impact", 1_000_000, || {
-        let i = m_power.compute_impact(black_box(Quantity::from_f64(5.0)), black_box(Side::Buy), black_box(&snap));
+        let i = m_power.compute_impact(
+            black_box(Quantity::from_f64(5.0)),
+            black_box(Side::Buy),
+            black_box(&snap),
+        );
         black_box(i);
     });
 }
@@ -131,8 +148,7 @@ fn scenario_5_impact_models_compare() {
 fn scenario_6_depth_scaling() {
     println!("\n=== 场景 6：compute_impact 深度扫描 scaling ===");
     for &depth in &[1_usize, 5, 10, 20, 50] {
-        let m: Box<dyn ImpactModel> =
-            Box::new(LinearImpactModel::new(0.05).with_depth(depth));
+        let m: Box<dyn ImpactModel> = Box::new(LinearImpactModel::new(0.05).with_depth(depth));
 
         let mut engine = ImpactedMatchingEngine::new(Box::new(LinearImpactModel::new(0.0)));
         refill_ask_book(&mut engine, 0, 50, 10.0);
@@ -140,7 +156,11 @@ fn scenario_6_depth_scaling() {
 
         let label = format!("compute_impact depth={depth}");
         time(&label, 1_000_000, || {
-            let i = m.compute_impact(black_box(Quantity::from_f64(5.0)), black_box(Side::Buy), black_box(&snap));
+            let i = m.compute_impact(
+                black_box(Quantity::from_f64(5.0)),
+                black_box(Side::Buy),
+                black_box(&snap),
+            );
             black_box(i);
         });
     }

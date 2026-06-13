@@ -228,12 +228,7 @@ mod tests {
             .with_cache_capacity(NonZeroUsize::new(2).unwrap())
             .register_source(Box::new(MockSource::with_rows("m", vec![tick()])));
         for i in 0..3 {
-            let req = DataRequest::new(
-                format!("SYM{i}"),
-                Utc::now(),
-                Utc::now(),
-                Frequency::Tick,
-            );
+            let req = DataRequest::new(format!("SYM{i}"), Utc::now(), Utc::now(), Frequency::Tick);
             let _ = svc.load(&req).await.unwrap();
         }
         let stats = svc.cache_stats();
@@ -246,8 +241,8 @@ mod tests {
 
     #[tokio::test]
     async fn cache_hit_increments_hits_counter() {
-        let svc = DataService::new()
-            .register_source(Box::new(MockSource::with_rows("m", vec![tick()])));
+        let svc =
+            DataService::new().register_source(Box::new(MockSource::with_rows("m", vec![tick()])));
         let req = DataRequest::new("X", Utc::now(), Utc::now(), Frequency::Tick);
         svc.load(&req).await.unwrap(); // miss
         svc.load(&req).await.unwrap(); // hit

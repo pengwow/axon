@@ -274,7 +274,7 @@ mod tests {
     fn test_router_with_zero_interest_handler() {
         let mut router = EventRouter::new();
         // 注册一个只关心 SYSTEM 的订阅者
-        router.register(Box::new(SystemOnlyCollector::default()));
+        router.register(Box::new(SystemOnlyCollector));
         // 派发 100 个 MARKET_DATA 事件
         for i in 0..100 {
             router.dispatch(&make_tick_event(i, 100.0));
@@ -347,8 +347,9 @@ mod tests {
         const PER_THREAD: usize = 100;
 
         // 每个线程创建独立的 EventCollector
-        let counters: Vec<Arc<std::sync::Mutex<usize>>> =
-            (0..N_THREADS).map(|_| Arc::new(std::sync::Mutex::new(0))).collect();
+        let counters: Vec<Arc<std::sync::Mutex<usize>>> = (0..N_THREADS)
+            .map(|_| Arc::new(std::sync::Mutex::new(0)))
+            .collect();
 
         let mut handles = Vec::with_capacity(N_THREADS);
         for (i, counter) in counters.iter().enumerate() {
@@ -386,8 +387,9 @@ mod tests {
         const PER_THREAD: usize = 1_000;
 
         // 每个线程独立维护一个计数器
-        let totals: Vec<Arc<std::sync::Mutex<usize>>> =
-            (0..N_THREADS).map(|_| Arc::new(std::sync::Mutex::new(0))).collect();
+        let totals: Vec<Arc<std::sync::Mutex<usize>>> = (0..N_THREADS)
+            .map(|_| Arc::new(std::sync::Mutex::new(0)))
+            .collect();
 
         let mut handles = Vec::with_capacity(N_THREADS);
         for (i, total) in totals.iter().enumerate() {
@@ -408,7 +410,11 @@ mod tests {
         }
         // 每个线程 dispatch 了 PER_THREAD 个事件
         for (i, total) in totals.iter().enumerate() {
-            assert_eq!(*total.lock().unwrap(), PER_THREAD, "thread {i} 应 dispatch {PER_THREAD} 次");
+            assert_eq!(
+                *total.lock().unwrap(),
+                PER_THREAD,
+                "thread {i} 应 dispatch {PER_THREAD} 次"
+            );
         }
     }
 

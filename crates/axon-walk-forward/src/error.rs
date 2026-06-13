@@ -60,21 +60,14 @@ mod tests {
         assert!(WalkForwardError::Serialization("yaml".into()).is_retryable());
         // 不可重试
         assert!(!WalkForwardError::Config("missing field".into()).is_retryable());
-        assert!(!WalkForwardError::InsufficientData {
-            need: 100,
-            got: 50
-        }
-        .is_retryable());
+        assert!(!WalkForwardError::InsufficientData { need: 100, got: 50 }.is_retryable());
         assert!(!WalkForwardError::IndexOutOfBounds("idx 10".into()).is_retryable());
         assert!(!WalkForwardError::LeakageDetected("overlap".into()).is_retryable());
     }
 
     #[test]
     fn test_insufficient_data_display_includes_needs_and_got() {
-        let e = WalkForwardError::InsufficientData {
-            need: 100,
-            got: 30,
-        };
+        let e = WalkForwardError::InsufficientData { need: 100, got: 30 };
         let msg = e.to_string();
         assert!(msg.contains("100"));
         assert!(msg.contains("30"));

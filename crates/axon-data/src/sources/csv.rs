@@ -2,19 +2,25 @@
 //!
 //! 支持灵活列映射 + 时间戳单位转换 + 时间窗口过滤。
 //! 默认假设列序:`timestamp,price,quantity,side`(纳秒整数时间戳)。
+//!
+//! PR5:`query` 走列式 4 buffer 一次性 Arrow 接管;`stream` yield `RecordBatch`。
 
+use std::pin::Pin;
+use std::sync::Arc;
+
+use arrow::array::{Float64Array, Int64Array, StringArray};
+use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use futures_core::Stream;
-use std::pin::Pin;
 
-use crate::dataset::Dataset;
+use crate::dataset::{Dataset, dataset_schema};
 use crate::error::{CsvLocation, DataError, DataResult};
 use crate::traits::DataSource;
 use crate::types::{DataRequest, Frequency, SchemaField};
 
-use axon_core::market::{Side, Tick};
 use axon_core::time::Timestamp;
-use axon_core::types::{Price, Quantity};
+// PR5:query() 不再直接构造 `Tick`/`Price`/`Quantity`(走 Arrow buffer 接管);
+// `Side` 仅在 `mod tests` 中使用,故移到 mod 内
 
 /// 时间戳单位(支持纳秒/微秒/毫秒/秒)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,31 +159,39 @@ impl CsvSource {
 
     /// 按时间窗口过滤(纳秒为单位,包含两端)
     ///
-    /// 复用 `query` 的解析逻辑,加载后过滤并重算 checksum。
-    /// 主要用于延迟窗口裁剪 + 单元测试。
+    /// PR5:走 `Dataset::by_time_range`(列式 `arrow::compute::ge + le + and` 谓词)
     pub async fn query_with_time_filter(
         &self,
         req: &DataRequest,
         start_nanos: i64,
         end_nanos: i64,
     ) -> DataResult<Dataset> {
-        let mut ds = self.query(req).await?;
-        ds.rows.retain(|t| {
-            let ts = t.timestamp.nanos;
-            ts >= start_nanos && ts <= end_nanos
-        });
-        // 重新计算 checksum(rows 改变后,原 checksum 失效)
-        ds.checksum = Dataset::compute_checksum(&ds.rows);
-        Ok(ds)
+        let ds = self.query(req).await?;
+        ds.by_time_range(
+            Timestamp::from_nanos(start_nanos),
+            Timestamp::from_nanos(end_nanos),
+        )
     }
 
     /// 读取 schema(用于 [`DataSource::schema`])
     fn schema_fields(&self) -> Vec<SchemaField> {
         vec![
-            SchemaField { name: "timestamp".into(), dtype: crate::types::DataType::Timestamp },
-            SchemaField { name: "price".into(), dtype: crate::types::DataType::F64 },
-            SchemaField { name: "quantity".into(), dtype: crate::types::DataType::F64 },
-            SchemaField { name: "side".into(), dtype: crate::types::DataType::String },
+            SchemaField {
+                name: "timestamp".into(),
+                dtype: crate::types::DataType::Timestamp,
+            },
+            SchemaField {
+                name: "price".into(),
+                dtype: crate::types::DataType::F64,
+            },
+            SchemaField {
+                name: "quantity".into(),
+                dtype: crate::types::DataType::F64,
+            },
+            SchemaField {
+                name: "side".into(),
+                dtype: crate::types::DataType::String,
+            },
         ]
     }
 }
@@ -200,18 +214,28 @@ impl DataSource for CsvSource {
         let mut reader = csv::Reader::from_path(&self.path)
             .map_err(|e| DataError::InvalidRequest(format!("open {}: {}", self.path, e)))?;
 
-        let mut rows = Vec::new();
+        // 预分配 4 个列 buffer,最后一次性 Arrow 接管(零拷贝)
+        let mut ts_buf: Vec<i64> = Vec::new();
+        let mut px_buf: Vec<f64> = Vec::new();
+        let mut qty_buf: Vec<f64> = Vec::new();
+        let mut side_buf: Vec<String> = Vec::new();
+
         for (i, record) in reader.records().enumerate() {
-            let record = record.map_err(|e| {
-                DataError::CorruptData {
-                    expected: "valid csv row".into(),
-                    actual: format!("line {i}: {e}"),
-                    location: Some(CsvLocation { file: self.path.clone(), line: i + 2, column: None }),
-                }
+            let record = record.map_err(|e| DataError::CorruptData {
+                expected: "valid csv row".into(),
+                actual: format!("line {i}: {e}"),
+                location: Some(CsvLocation {
+                    file: self.path.clone(),
+                    line: i + 2,
+                    column: None,
+                }),
             })?;
 
             // 期望至少包含必填的 3 列(timestamp/price/quantity)
-            let required = m.side_col.map(|s| s + 1).unwrap_or_else(|| m.quantity_col + 1);
+            let required = m
+                .side_col
+                .map(|s| s + 1)
+                .unwrap_or_else(|| m.quantity_col + 1);
             if record.len() < required {
                 return Err(DataError::SchemaMismatch {
                     expected: format!("≥{required} columns"),
@@ -219,76 +243,99 @@ impl DataSource for CsvSource {
                 });
             }
 
-            let raw_ts: i64 = record[m.timestamp_col].parse().map_err(|e| {
-                DataError::CorruptData {
-                    expected: format!("i64 timestamp (unit={:?})", m.timestamp_unit),
-                    actual: format!("line {i}: {e}"),
-                    location: Some(CsvLocation { file: self.path.clone(), line: i + 2, column: Some("timestamp".into()) }),
-                }
-            })?;
+            let raw_ts: i64 =
+                record[m.timestamp_col]
+                    .parse()
+                    .map_err(|e| DataError::CorruptData {
+                        expected: format!("i64 timestamp (unit={:?})", m.timestamp_unit),
+                        actual: format!("line {i}: {e}"),
+                        location: Some(CsvLocation {
+                            file: self.path.clone(),
+                            line: i + 2,
+                            column: Some("timestamp".into()),
+                        }),
+                    })?;
             let ts_nanos = m.timestamp_unit.to_nanos(raw_ts);
 
-            let price: f64 = record[m.price_col].parse().map_err(|e| {
-                DataError::CorruptData {
+            let price: f64 = record[m.price_col]
+                .parse()
+                .map_err(|e| DataError::CorruptData {
                     expected: "f64 price".into(),
                     actual: format!("line {i}: {e}"),
-                    location: Some(CsvLocation { file: self.path.clone(), line: i + 2, column: Some("price".into()) }),
-                }
-            })?;
-            let qty: f64 = record[m.quantity_col].parse().map_err(|e| {
-                DataError::CorruptData {
+                    location: Some(CsvLocation {
+                        file: self.path.clone(),
+                        line: i + 2,
+                        column: Some("price".into()),
+                    }),
+                })?;
+            let qty: f64 = record[m.quantity_col]
+                .parse()
+                .map_err(|e| DataError::CorruptData {
                     expected: "f64 quantity".into(),
                     actual: format!("line {i}: {e}"),
-                    location: Some(CsvLocation { file: self.path.clone(), line: i + 2, column: Some("quantity".into()) }),
-                }
-            })?;
+                    location: Some(CsvLocation {
+                        file: self.path.clone(),
+                        line: i + 2,
+                        column: Some("quantity".into()),
+                    }),
+                })?;
 
-            let side = if let Some(col) = m.side_col {
+            let side_str = if let Some(col) = m.side_col {
                 match record[col].to_ascii_lowercase().as_str() {
-                    "buy" | "b" => Side::Buy,
-                    "sell" | "s" => Side::Sell,
+                    "buy" | "b" => "buy".to_string(),
+                    "sell" | "s" => "sell".to_string(),
                     other => {
                         return Err(DataError::CorruptData {
                             expected: "buy/sell".into(),
                             actual: format!("line {i}: '{other}'"),
-                            location: Some(CsvLocation { file: self.path.clone(), line: i + 2, column: Some("side".into()) }),
-                        })
+                            location: Some(CsvLocation {
+                                file: self.path.clone(),
+                                line: i + 2,
+                                column: Some("side".into()),
+                            }),
+                        });
                     }
                 }
             } else {
-                // 无 side 列时默认 Buy(简化)
-                Side::Buy
+                // 无 side 列时默认 buy
+                "buy".to_string()
             };
 
-            let timestamp = Timestamp::from_nanos(ts_nanos);
-            let price = Price::from_f64(price);
-            let quantity = Quantity::from_f64(qty);
-
-            rows.push(Tick::new(timestamp, price, quantity, side));
+            ts_buf.push(ts_nanos);
+            px_buf.push(price);
+            qty_buf.push(qty);
+            side_buf.push(side_str);
         }
 
         // 验证 frequency 与数据匹配(简单断言:Tick 频率必须是 Tick)
-        if req.frequency != Frequency::Tick && !rows.is_empty() {
+        if req.frequency != Frequency::Tick && !ts_buf.is_empty() {
             return Err(DataError::InvalidRequest(format!(
                 "CsvSource 骨架仅支持 Tick 频率,收到 {:?}",
                 req.frequency
             )));
         }
 
-        Ok(Dataset::new(
-            rows,
-            self.schema_fields(),
-            self.name.clone(),
-            req.clone(),
-        ))
+        // 一次性 Arrow 接管(零拷贝:Vec buffer 直接给 Array::from)
+        let batch = RecordBatch::try_new(
+            dataset_schema().clone(),
+            vec![
+                Arc::new(Int64Array::from(ts_buf)),
+                Arc::new(Float64Array::from(px_buf)),
+                Arc::new(Float64Array::from(qty_buf)),
+                Arc::new(StringArray::from(side_buf)),
+            ],
+        )
+        .map_err(|e| DataError::Internal(format!("csv RecordBatch::try_new: {e}")))?;
+        Dataset::new(vec![batch], self.name.clone(), req.clone())
     }
 
     async fn stream(
         &self,
         req: &DataRequest,
-    ) -> DataResult<Pin<Box<dyn Stream<Item = DataResult<Tick>> + Send>>> {
+    ) -> DataResult<Pin<Box<dyn Stream<Item = DataResult<RecordBatch>> + Send>>> {
+        // 走 query 拿完整 batch,然后 iter(伪流式 — CsvSource 本身就是单 batch)
         let dataset = self.query(req).await?;
-        let stream = futures::stream::iter(dataset.rows.into_iter().map(Ok));
+        let stream = futures::stream::iter(dataset.into_batches().into_iter().map(Ok));
         Ok(Box::pin(stream))
     }
 }
@@ -297,6 +344,7 @@ impl DataSource for CsvSource {
 mod tests {
     use super::*;
     use crate::types::DataRequest;
+    use axon_core::market::Side;
     use chrono::Utc;
 
     /// 构造测试用请求
@@ -346,7 +394,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("millis.csv");
         // 时间戳是毫秒:1,2,3 -> 纳秒 1e6, 2e6, 3e6
-        std::fs::write(&path, "ts,px,qty,side\n1,10.0,1,buy\n2,20.0,1,sell\n3,30.0,1,buy\n").unwrap();
+        std::fs::write(
+            &path,
+            "ts,px,qty,side\n1,10.0,1,buy\n2,20.0,1,sell\n3,30.0,1,buy\n",
+        )
+        .unwrap();
         let mapping = CsvColumnMapping {
             timestamp_col: 0,
             price_col: 1,
@@ -359,7 +411,7 @@ mod tests {
         let ds = futures::executor::block_on(src.query(&req)).unwrap();
         assert_eq!(ds.len(), 3);
         // 验证时间戳被正确转换为纳秒
-        let ts: Vec<i64> = ds.iter().map(|t| t.timestamp.nanos).collect();
+        let ts: Vec<i64> = ds.iter_rows().map(|t| t.timestamp.nanos).collect();
         assert_eq!(ts, vec![1_000_000, 2_000_000, 3_000_000]);
     }
 
@@ -381,7 +433,7 @@ mod tests {
         let ds = futures::executor::block_on(src.query(&req)).unwrap();
         assert_eq!(ds.len(), 2);
         // 所有 tick 都是 Buy
-        assert!(ds.iter().all(|t| t.side == Side::Buy));
+        assert!(ds.iter_rows().all(|t| t.side == Side::Buy));
     }
 
     #[test]
@@ -397,12 +449,9 @@ mod tests {
         let src = CsvSource::new("test", path.to_str().unwrap());
         let req = make_test_req();
         // 过滤窗口 [1, 3],保留 1, 2, 3
-        let ds = futures::executor::block_on(
-            src.query_with_time_filter(&req, 1, 3),
-        )
-        .unwrap();
+        let ds = futures::executor::block_on(src.query_with_time_filter(&req, 1, 3)).unwrap();
         assert_eq!(ds.len(), 3);
-        let ts: Vec<i64> = ds.iter().map(|t| t.timestamp.nanos).collect();
+        let ts: Vec<i64> = ds.iter_rows().map(|t| t.timestamp.nanos).collect();
         assert_eq!(ts, vec![1, 2, 3]);
     }
 
@@ -410,7 +459,11 @@ mod tests {
     fn csv_source_time_filter_recomputes_checksum() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ck.csv");
-        std::fs::write(&path, "ts,px,qty,side\n0,100,1,buy\n1,101,1,buy\n2,102,1,buy\n").unwrap();
+        std::fs::write(
+            &path,
+            "ts,px,qty,side\n0,100,1,buy\n1,101,1,buy\n2,102,1,buy\n",
+        )
+        .unwrap();
         let src = CsvSource::new("test", path.to_str().unwrap());
         let req = make_test_req();
         let full = futures::executor::block_on(src.query(&req)).unwrap();
@@ -418,7 +471,8 @@ mod tests {
         // 过滤后 checksum 必须不同(行数变了)
         assert_ne!(full.checksum, filtered.checksum);
         // 过滤后 checksum 等于用 2 行重算的值
-        let expected = Dataset::compute_checksum(&full.rows[..2]);
+        let first_batch = full.batches()[0].slice(0, 2);
+        let expected = Dataset::compute_checksum(&[first_batch]);
         assert_eq!(filtered.checksum, expected);
     }
 
@@ -439,16 +493,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("renamed.csv");
         // 列名:time, close, volume, buy_sell - 推断器应识别
-        std::fs::write(&path, "time,close,volume,buy_sell\n100,50.0,1,buy\n200,60.0,2,sell\n").unwrap();
+        std::fs::write(
+            &path,
+            "time,close,volume,buy_sell\n100,50.0,1,buy\n200,60.0,2,sell\n",
+        )
+        .unwrap();
         let src = CsvSource::new("test", path.to_str().unwrap());
         let req = make_test_req();
         let ds = futures::executor::block_on(src.query(&req)).unwrap();
         assert_eq!(ds.len(), 2);
         // price 应从第 2 列(close)读到
-        let prices: Vec<f64> = ds.iter().map(|t| t.price.as_f64()).collect();
+        let prices: Vec<f64> = ds.iter_rows().map(|t| t.price.as_f64()).collect();
         assert_eq!(prices, vec![50.0, 60.0]);
         // side 应从第 4 列(buy_sell)推断
-        let sides: Vec<Side> = ds.iter().map(|t| t.side).collect();
+        let sides: Vec<Side> = ds.iter_rows().map(|t| t.side).collect();
         assert_eq!(sides, vec![Side::Buy, Side::Sell]);
     }
 
@@ -462,7 +520,7 @@ mod tests {
         let req = make_test_req();
         let ds = futures::executor::block_on(src.query(&req)).unwrap();
         assert_eq!(ds.len(), 1);
-        assert_eq!(ds.iter().next().unwrap().price.as_f64(), 1.0);
+        assert_eq!(ds.iter_rows().next().unwrap().price.as_f64(), 1.0);
     }
 
     #[test]
@@ -483,7 +541,8 @@ mod tests {
         let req = make_test_req();
         let ds = futures::executor::block_on(src.query(&req)).unwrap();
         assert_eq!(ds.len(), 1);
-        assert_eq!(ds.iter().next().unwrap().timestamp.nanos, 100);
-        assert_eq!(ds.iter().next().unwrap().price.as_f64(), 1.0);
+        let first = ds.iter_rows().next().unwrap();
+        assert_eq!(first.timestamp.nanos, 100);
+        assert_eq!(first.price.as_f64(), 1.0);
     }
 }

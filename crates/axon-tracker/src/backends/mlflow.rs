@@ -32,7 +32,8 @@ impl MlflowTracker {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| TrackerError::Network(e.to_string()))?;
-        let experiment_id = Self::get_or_create_experiment(&client, &tracking_uri, experiment_name)?;
+        let experiment_id =
+            Self::get_or_create_experiment(&client, &tracking_uri, experiment_name)?;
         let run_id = Self::create_run(&client, &tracking_uri, &experiment_id)?;
         Ok(Self {
             client,
@@ -226,8 +227,8 @@ impl ExperimentTracker for MlflowTracker {
             .tracking_uri
             .join("api/2.0/mlflow/runs/log-artifact")
             .map_err(|e| TrackerError::Parse(e.to_string()))?;
-        let file_bytes = std::fs::read(path)
-            .map_err(|e| TrackerError::Io(format!("{path:?}: {e}")))?;
+        let file_bytes =
+            std::fs::read(path).map_err(|e| TrackerError::Io(format!("{path:?}: {e}")))?;
         self.retry.execute(|| {
             let form = reqwest::blocking::multipart::Form::new()
                 .text("run_id", self.run_id.0.clone())

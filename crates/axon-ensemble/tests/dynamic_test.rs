@@ -108,8 +108,16 @@ fn test_dynamic_weights_shift_toward_better_performers() {
 
     let weights = ens.get_weights();
     // 模型 1 权重应 > 模型 2
-    let w1 = weights.iter().find(|w| w.model_name == "m1").unwrap().weight;
-    let w2 = weights.iter().find(|w| w.model_name == "m2").unwrap().weight;
+    let w1 = weights
+        .iter()
+        .find(|w| w.model_name == "m1")
+        .unwrap()
+        .weight;
+    let w2 = weights
+        .iter()
+        .find(|w| w.model_name == "m2")
+        .unwrap()
+        .weight;
     assert!(w1 > w2, "m1 权重 {} 应 > m2 权重 {}", w1, w2);
 }
 
@@ -129,8 +137,16 @@ fn test_dynamic_update_weights_via_performances_array() {
     // 2 个标量表现值，与模型顺序对应
     ens.update_weights(&[0.9, 0.1]);
     let weights = ens.get_weights();
-    let w1 = weights.iter().find(|w| w.model_name == "m1").unwrap().weight;
-    let w2 = weights.iter().find(|w| w.model_name == "m2").unwrap().weight;
+    let w1 = weights
+        .iter()
+        .find(|w| w.model_name == "m1")
+        .unwrap()
+        .weight;
+    let w2 = weights
+        .iter()
+        .find(|w| w.model_name == "m2")
+        .unwrap()
+        .weight;
     assert!(w1 > w2);
 }
 

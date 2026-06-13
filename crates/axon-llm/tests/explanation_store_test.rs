@@ -6,8 +6,10 @@
 
 use std::sync::Arc;
 
-use axon_explain::types::{ActionSnapshot, AttentionWeights, CounterfactualExplanation, Explanation};
-use axon_llm::explain::{ExplanationStore, DEFAULT_CAPACITY};
+use axon_explain::types::{
+    ActionSnapshot, AttentionWeights, CounterfactualExplanation, Explanation,
+};
+use axon_llm::explain::{DEFAULT_CAPACITY, ExplanationStore};
 
 fn sample_explanation(id: &str) -> Explanation {
     Explanation {
@@ -51,20 +53,30 @@ async fn test_store_get_nonexistent_returns_none() {
 async fn test_store_contains_key_distinguishes_presence() {
     let store = ExplanationStore::new(100);
     assert!(!store.contains_key("absent").await);
-    store.insert("d1".to_string(), sample_explanation("d1")).await;
+    store
+        .insert("d1".to_string(), sample_explanation("d1"))
+        .await;
     assert!(store.contains_key("d1").await);
 }
 
 #[tokio::test]
 async fn test_store_capacity_evicts_oldest() {
     let store = ExplanationStore::new(3);
-    store.insert("d1".to_string(), sample_explanation("d1")).await;
-    store.insert("d2".to_string(), sample_explanation("d2")).await;
-    store.insert("d3".to_string(), sample_explanation("d3")).await;
+    store
+        .insert("d1".to_string(), sample_explanation("d1"))
+        .await;
+    store
+        .insert("d2".to_string(), sample_explanation("d2"))
+        .await;
+    store
+        .insert("d3".to_string(), sample_explanation("d3"))
+        .await;
     assert_eq!(store.len().await, 3);
 
     // 第 4 条应淘汰 d1（FIFO）
-    store.insert("d4".to_string(), sample_explanation("d4")).await;
+    store
+        .insert("d4".to_string(), sample_explanation("d4"))
+        .await;
     assert_eq!(store.len().await, 3);
     assert!(!store.contains_key("d1").await, "d1 应被淘汰");
     assert!(store.contains_key("d2").await);
@@ -76,11 +88,17 @@ async fn test_store_capacity_evicts_oldest() {
 async fn test_store_reinsert_same_id_does_not_evict() {
     // 覆盖同 ID：不应触发 FIFO 淘汰
     let store = ExplanationStore::new(2);
-    store.insert("d1".to_string(), sample_explanation("d1")).await;
-    store.insert("d2".to_string(), sample_explanation("d2")).await;
+    store
+        .insert("d1".to_string(), sample_explanation("d1"))
+        .await;
+    store
+        .insert("d2".to_string(), sample_explanation("d2"))
+        .await;
 
     // 覆盖 d1
-    store.insert("d1".to_string(), sample_explanation("d1-v2")).await;
+    store
+        .insert("d1".to_string(), sample_explanation("d1-v2"))
+        .await;
     assert_eq!(store.len().await, 2);
     assert!(store.contains_key("d1").await);
     assert!(store.contains_key("d2").await);
@@ -88,16 +106,24 @@ async fn test_store_reinsert_same_id_does_not_evict() {
     // 现在插 d3：淘汰顺序应该跳过 d1（已被覆盖，不是"oldest"）
     // 实际行为：因 d1 重新插入会重排到 order 末尾，所以 d2 被淘汰
     // 这个测试主要确保不会出现 panic 和容量溢出
-    store.insert("d3".to_string(), sample_explanation("d3")).await;
+    store
+        .insert("d3".to_string(), sample_explanation("d3"))
+        .await;
     assert_eq!(store.len().await, 2);
 }
 
 #[tokio::test]
 async fn test_store_latest_returns_most_recent() {
     let store = ExplanationStore::new(100);
-    store.insert("d1".to_string(), sample_explanation("d1")).await;
-    store.insert("d2".to_string(), sample_explanation("d2")).await;
-    store.insert("d3".to_string(), sample_explanation("d3")).await;
+    store
+        .insert("d1".to_string(), sample_explanation("d1"))
+        .await;
+    store
+        .insert("d2".to_string(), sample_explanation("d2"))
+        .await;
+    store
+        .insert("d3".to_string(), sample_explanation("d3"))
+        .await;
 
     let latest = store.latest(2).await;
     assert_eq!(latest.len(), 2);
@@ -109,7 +135,9 @@ async fn test_store_latest_returns_most_recent() {
 #[tokio::test]
 async fn test_store_latest_n_larger_than_capacity() {
     let store = ExplanationStore::new(100);
-    store.insert("d1".to_string(), sample_explanation("d1")).await;
+    store
+        .insert("d1".to_string(), sample_explanation("d1"))
+        .await;
     let latest = store.latest(50).await;
     assert_eq!(latest.len(), 1);
 }
@@ -143,7 +171,9 @@ async fn test_store_concurrent_inserts() {
 #[tokio::test]
 async fn test_store_concurrent_reads_writes() {
     let store = Arc::new(ExplanationStore::new(100));
-    store.insert("d1".to_string(), sample_explanation("d1")).await;
+    store
+        .insert("d1".to_string(), sample_explanation("d1"))
+        .await;
 
     let mut handles = vec![];
     for _ in 0..20 {

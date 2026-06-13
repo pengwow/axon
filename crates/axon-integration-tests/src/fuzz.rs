@@ -91,7 +91,7 @@ fn order_book_strategy() -> impl Strategy<Value = OrderBookSnapshot> {
 /// 合法订单生成器：固定 symbol/side，fuzz 限价、数量
 fn order_strategy(side: Side, base_price: f64) -> impl Strategy<Value = Order> {
     (
-        0u64..1_000_000u64, // order_id
+        0u64..1_000_000u64,  // order_id
         1u64..=1_000_000u64, // price offset
         1u64..=1_000_000u64, // quantity
     )

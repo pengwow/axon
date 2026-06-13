@@ -55,6 +55,7 @@ impl EnvError {
     ///
     /// - 终态错误（episode 已结束、数据耗尽）⇒ 不可重试
     /// - 业务错误（动作非法、计算失败）⇒ 不可重试
+    ///
     /// 当前所有变体都是不可重试的逻辑错误。
     pub fn is_retryable(&self) -> bool {
         match self {

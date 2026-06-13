@@ -157,7 +157,9 @@ impl RecordingLayer {
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        self.dir().join(model).join(format!("{}.json", Self::fixture_key(req)))
+        self.dir()
+            .join(model)
+            .join(format!("{}.json", Self::fixture_key(req)))
     }
 
     /// 读 fixture(回放时)
@@ -198,8 +200,13 @@ impl RecordingLayer {
         req: &RecordedRequest,
     ) -> Result<RecordedResponse, LLMError> {
         // 1. 反序列化 messages
-        let messages: Vec<Message> = serde_json::from_value(req.body.get("messages").cloned().unwrap_or(serde_json::Value::Array(vec![])))
-            .map_err(|e| LLMError::Parse(format!("decode messages: {e}")))?;
+        let messages: Vec<Message> = serde_json::from_value(
+            req.body
+                .get("messages")
+                .cloned()
+                .unwrap_or(serde_json::Value::Array(vec![])),
+        )
+        .map_err(|e| LLMError::Parse(format!("decode messages: {e}")))?;
 
         // 2. 调 backend
         let llm_resp: LLMResponse = backend.complete(&messages).await?;
@@ -239,9 +246,7 @@ impl RecordingLayer {
                         self.test_name
                     )));
                 }
-                let resp = self
-                    .read_fixture(&path)
-                    .map_err(LLMError::Parse)?;
+                let resp = self.read_fixture(&path).map_err(LLMError::Parse)?;
                 let mut cache = self.cache.lock().expect("cache poisoned");
                 cache.insert(key, resp.clone());
                 Ok(resp)
@@ -267,7 +272,13 @@ impl RecordingLayer {
 
 /// 脱敏 request 头(用于 fixture 落盘)
 pub fn sanitize_request(mut req: RecordedRequest) -> RecordedRequest {
-    for k in ["Authorization", "authorization", "x-api-key", "host", "Host"] {
+    for k in [
+        "Authorization",
+        "authorization",
+        "x-api-key",
+        "host",
+        "Host",
+    ] {
         req.headers.remove(k);
     }
     req

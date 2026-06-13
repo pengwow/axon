@@ -76,7 +76,10 @@ impl CounterfactualGenerator {
     ) -> Self {
         // 用模型在零输入上预测作为 base 估值（简化实现）
         let background_mean = vec![0.0; feature_names.len()];
-        debug!("Creating CounterfactualGenerator with {} features", feature_names.len());
+        debug!(
+            "Creating CounterfactualGenerator with {} features",
+            feature_names.len()
+        );
         // 注意：model 当前未直接使用，保留以备未来添加 "基于梯度的优化"
         let _ = model;
         Self {

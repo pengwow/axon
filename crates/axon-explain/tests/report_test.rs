@@ -5,13 +5,13 @@
 //! - Markdown 输出包含标题 / 表格 / 决策列表
 //! - HTML 包含正负向特征的颜色分类
 
-use std::collections::HashMap;
-use chrono::Utc;
 use axon_explain::report::ReportGenerator;
 use axon_explain::types::{
-    ActionAttribution, ActionSnapshot, DecisionReport, Explanation, FeatureContribution,
-    FeatureSummary, ContributionDirection, RiskAttributionMetrics,
+    ActionAttribution, ActionSnapshot, ContributionDirection, DecisionReport, Explanation,
+    FeatureContribution, FeatureSummary, RiskAttributionMetrics,
 };
+use chrono::Utc;
+use std::collections::HashMap;
 
 // ─── 辅助：构造测试报告 ──────────────────────────────────
 
@@ -87,7 +87,10 @@ fn make_report() -> DecisionReport {
 fn test_html_report_contains_doctype_and_heading() {
     let report = make_report();
     let html = ReportGenerator::render_html(&report);
-    assert!(html.contains("<!DOCTYPE html>"), "HTML 报告必须包含 DOCTYPE");
+    assert!(
+        html.contains("<!DOCTYPE html>"),
+        "HTML 报告必须包含 DOCTYPE"
+    );
     assert!(html.contains("<html>"), "HTML 报告必须包含 <html> 标签");
     assert!(html.contains("决策解释报告"), "HTML 报告必须包含中文标题");
 }
@@ -125,14 +128,20 @@ fn test_html_report_escapes_special_chars() {
     // 在 summary 中注入特殊字符
     let mut expl = make_explanation("包含 <script> 标签 & 特殊字符", 0.5);
     expl.action = ActionSnapshot {
-        position_size: 1.0, entry_price: 0.0, stop_loss: 0.0, take_profit: 0.0,
+        position_size: 1.0,
+        entry_price: 0.0,
+        stop_loss: 0.0,
+        take_profit: 0.0,
         order_type: "limit".into(),
     };
     report.explanations = vec![expl];
     let html = ReportGenerator::render_html(&report);
     // 不应包含未转义的 <script>
     assert!(!html.contains("<script>"), "HTML 报告必须转义 <script>");
-    assert!(html.contains("&lt;script&gt;"), "HTML 报告应转义为 &lt;script&gt;");
+    assert!(
+        html.contains("&lt;script&gt;"),
+        "HTML 报告应转义为 &lt;script&gt;"
+    );
 }
 
 // ─── Markdown 报告 ──────────────────────────────────────
@@ -141,7 +150,10 @@ fn test_html_report_escapes_special_chars() {
 fn test_markdown_report_contains_heading() {
     let report = make_report();
     let md = ReportGenerator::render_markdown(&report);
-    assert!(md.contains("# 决策解释报告"), "Markdown 报告必须包含一级标题");
+    assert!(
+        md.contains("# 决策解释报告"),
+        "Markdown 报告必须包含一级标题"
+    );
 }
 
 #[test]
@@ -156,7 +168,10 @@ fn test_markdown_report_contains_feature_table() {
 fn test_markdown_report_includes_decision_section() {
     let report = make_report();
     let md = ReportGenerator::render_markdown(&report);
-    assert!(md.contains("## 决策明细"), "Markdown 报告必须包含决策明细节");
+    assert!(
+        md.contains("## 决策明细"),
+        "Markdown 报告必须包含决策明细节"
+    );
     assert!(md.contains("### 决策 #1"), "Markdown 报告应包含分项决策");
     assert!(md.contains("置信度"), "Markdown 报告应包含置信度字段");
 }
@@ -169,7 +184,11 @@ fn test_report_generation_completes_quickly() {
     let _ = ReportGenerator::render_html(&report);
     let _ = ReportGenerator::render_markdown(&report);
     let elapsed = start.elapsed();
-    assert!(elapsed.as_secs() < 1, "报告生成耗时 {} 超过 1s", elapsed.as_secs_f64());
+    assert!(
+        elapsed.as_secs() < 1,
+        "报告生成耗时 {} 超过 1s",
+        elapsed.as_secs_f64()
+    );
 }
 
 // ─── generate_decision_report ─────────────────────────────
@@ -180,12 +199,8 @@ fn test_generate_decision_report_populates_html_and_markdown() {
         make_explanation("决策 1", 0.8),
         make_explanation("决策 2", 0.7),
     ];
-    let report = ReportGenerator::generate_decision_report(
-        "rpt_test",
-        explanations,
-        Utc::now(),
-        Utc::now(),
-    );
+    let report =
+        ReportGenerator::generate_decision_report("rpt_test", explanations, Utc::now(), Utc::now());
     assert_eq!(report.report_id, "rpt_test");
     assert!(report.html_content.is_some());
     assert!(report.markdown_content.is_some());

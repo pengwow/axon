@@ -11,8 +11,8 @@
 //!
 //! 实现 [`LLMBackend`] trait,同时提供 [`stream_complete`](Self::stream_complete) 流式入口。
 
-use super::streaming::{sse_bytes_to_deltas, TokenDelta};
-use super::retry::{with_backoff, BackoffConfig};
+use super::retry::{BackoffConfig, with_backoff};
+use super::streaming::{TokenDelta, sse_bytes_to_deltas};
 use crate::backend::{LLMBackend, LLMError, ToolDefinition};
 use crate::types::{FinishReason, LLMResponse, Message, TokenUsage, ToolCall};
 use async_trait::async_trait;
@@ -47,8 +47,7 @@ impl OpenAICompatConfig {
             base_url: std::env::var("DEEPSEEK_BASE_URL")
                 .unwrap_or_else(|_| "https://api.deepseek.com/v1".into()),
             api_key,
-            model: std::env::var("DEEPSEEK_MODEL")
-                .unwrap_or_else(|_| "deepseek-chat".into()),
+            model: std::env::var("DEEPSEEK_MODEL").unwrap_or_else(|_| "deepseek-chat".into()),
             timeout: Duration::from_secs(60),
             max_tokens: 1024,
             temperature: 0.7,
@@ -116,7 +115,8 @@ impl OpenAICompatBackend {
                     obj["tool_call_id"] = serde_json::Value::String(tcid.clone());
                 }
                 if let Some(tcs) = &m.tool_calls {
-                    obj["tool_calls"] = serde_json::to_value(tcs).unwrap_or(serde_json::Value::Null);
+                    obj["tool_calls"] =
+                        serde_json::to_value(tcs).unwrap_or(serde_json::Value::Null);
                 }
                 obj
             })

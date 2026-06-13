@@ -1,7 +1,7 @@
 //! 三个内置工具的测试辅助模块
 
-use serde_json::json;
 use axon_llm::tools::{Tool, ToolError};
+use serde_json::json;
 
 // ─── 市场分析工具 ─────────────────────────────────────────
 
@@ -9,8 +9,12 @@ pub struct AnalyzeMarketTool;
 
 #[async_trait::async_trait]
 impl Tool for AnalyzeMarketTool {
-    fn name(&self) -> &'static str { "analyze_market" }
-    fn description(&self) -> &'static str { "分析指定交易对的市场数据，返回价格、成交量、趋势等信息" }
+    fn name(&self) -> &'static str {
+        "analyze_market"
+    }
+    fn description(&self) -> &'static str {
+        "分析指定交易对的市场数据，返回价格、成交量、趋势等信息"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -29,14 +33,19 @@ impl Tool for AnalyzeMarketTool {
         let args: serde_json::Value = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
 
-        let symbol = args["symbol"].as_str()
+        let symbol = args["symbol"]
+            .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("缺少 symbol 参数".into()))?;
-        let timeframe = args["timeframe"].as_str()
+        let timeframe = args["timeframe"]
+            .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("缺少 timeframe 参数".into()))?;
 
         // 验证 timeframe
         if !["1m", "5m", "15m", "1h", "4h", "1d"].contains(&timeframe) {
-            return Err(ToolError::InvalidArguments(format!("无效 timeframe: {}", timeframe)));
+            return Err(ToolError::InvalidArguments(format!(
+                "无效 timeframe: {}",
+                timeframe
+            )));
         }
 
         let result = json!({
@@ -59,8 +68,12 @@ pub struct CheckPortfolioTool;
 
 #[async_trait::async_trait]
 impl Tool for CheckPortfolioTool {
-    fn name(&self) -> &'static str { "check_portfolio" }
-    fn description(&self) -> &'static str { "查询当前投资组合状态，包括持仓、盈亏、净值" }
+    fn name(&self) -> &'static str {
+        "check_portfolio"
+    }
+    fn description(&self) -> &'static str {
+        "查询当前投资组合状态，包括持仓、盈亏、净值"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -106,8 +119,12 @@ pub struct SubmitOrderTool;
 
 #[async_trait::async_trait]
 impl Tool for SubmitOrderTool {
-    fn name(&self) -> &'static str { "submit_order" }
-    fn description(&self) -> &'static str { "提交交易订单（仅支持限价单，市价单需用户确认）" }
+    fn name(&self) -> &'static str {
+        "submit_order"
+    }
+    fn description(&self) -> &'static str {
+        "提交交易订单（仅支持限价单，市价单需用户确认）"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -125,20 +142,27 @@ impl Tool for SubmitOrderTool {
         let args: serde_json::Value = serde_json::from_str(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
 
-        let _symbol = args["symbol"].as_str()
+        let _symbol = args["symbol"]
+            .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("缺少 symbol".into()))?;
-        let side = args["side"].as_str()
+        let side = args["side"]
+            .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("缺少 side".into()))?;
-        let order_type = args["order_type"].as_str()
+        let order_type = args["order_type"]
+            .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("缺少 order_type".into()))?;
-        let quantity = args["quantity"].as_f64()
+        let quantity = args["quantity"]
+            .as_f64()
             .ok_or_else(|| ToolError::InvalidArguments("缺少 quantity".into()))?;
 
         if !["buy", "sell"].contains(&side) {
             return Err(ToolError::InvalidArguments(format!("无效 side: {}", side)));
         }
         if !["market", "limit"].contains(&order_type) {
-            return Err(ToolError::InvalidArguments(format!("无效 order_type: {}", order_type)));
+            return Err(ToolError::InvalidArguments(format!(
+                "无效 order_type: {}",
+                order_type
+            )));
         }
         if quantity <= 0.0 {
             return Err(ToolError::InvalidArguments("quantity 必须大于 0".into()));
@@ -147,7 +171,7 @@ impl Tool for SubmitOrderTool {
         // 市价单需要确认
         if order_type == "market" {
             return Err(ToolError::ExecutionFailed(
-                "市价单需要用户确认，暂不支持自动提交".into()
+                "市价单需要用户确认，暂不支持自动提交".into(),
             ));
         }
 

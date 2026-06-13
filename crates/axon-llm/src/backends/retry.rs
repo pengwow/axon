@@ -99,7 +99,8 @@ where
                     jittered_ms
                 };
 
-                let delay = Duration::from_millis(final_delay_ms.min(cfg.max_delay.as_millis() as u64));
+                let delay =
+                    Duration::from_millis(final_delay_ms.min(cfg.max_delay.as_millis() as u64));
                 sleep(delay).await;
                 attempt += 1;
             }
@@ -110,8 +111,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[tokio::test]
     async fn no_retry_returns_first_error() {

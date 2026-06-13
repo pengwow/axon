@@ -238,9 +238,7 @@ impl Tool for ComputeExplanationTool {
                     .get(&decision_id)
                     .await
                     .ok_or_else(|| {
-                        ToolError::ExecutionFailed(
-                            "解释未写入 store（一致性错误）".to_string(),
-                        )
+                        ToolError::ExecutionFailed("解释未写入 store（一致性错误）".to_string())
                     })
                     .and_then(|exp| {
                         serde_json::to_string(&exp)

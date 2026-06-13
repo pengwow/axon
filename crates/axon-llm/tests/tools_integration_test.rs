@@ -57,13 +57,13 @@ async fn test_check_portfolio_returns_positions() {
 #[tokio::test]
 async fn test_check_portfolio_with_history() {
     let tool = CheckPortfolioTool;
-    let result = tool
-        .execute(r#"{"include_history":true}"#)
-        .await
-        .unwrap();
+    let result = tool.execute(r#"{"include_history":true}"#).await.unwrap();
 
     let v: serde_json::Value = serde_json::from_str(&result).unwrap();
-    assert!(v.get("history").is_some(), "include_history=true 应包含历史");
+    assert!(
+        v.get("history").is_some(),
+        "include_history=true 应包含历史"
+    );
 }
 
 // ─── SubmitOrderTool ────────────────────────────────────────

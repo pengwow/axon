@@ -62,7 +62,12 @@ fn bench_submit_no_impact(c: &mut Criterion) {
     c.bench_function("submit_no_impact", |b| {
         b.iter(|| {
             // 每 iter 递增 id，避免重复 id 被去重导致空撮合
-            let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
+            let buy = make_limit(
+                black_box(next_id),
+                black_box(Side::Buy),
+                100.0,
+                black_box(1.0),
+            );
             let r = engine.submit(buy);
             // 补一档卖单维持订单簿深度 + permanent offset
             let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
@@ -82,7 +87,12 @@ fn bench_submit_linear_impact(c: &mut Criterion) {
 
     c.bench_function("submit_linear_impact", |b| {
         b.iter(|| {
-            let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
+            let buy = make_limit(
+                black_box(next_id),
+                black_box(Side::Buy),
+                100.0,
+                black_box(1.0),
+            );
             let r = engine.submit(buy);
             let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
             engine.submit(refill);
@@ -101,7 +111,12 @@ fn bench_submit_power_law_impact(c: &mut Criterion) {
 
     c.bench_function("submit_power_law_impact", |b| {
         b.iter(|| {
-            let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
+            let buy = make_limit(
+                black_box(next_id),
+                black_box(Side::Buy),
+                100.0,
+                black_box(1.0),
+            );
             let r = engine.submit(buy);
             let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
             engine.submit(refill);
@@ -125,7 +140,12 @@ fn bench_submit_depth_scaling(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, _| {
             b.iter(|| {
-                let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
+                let buy = make_limit(
+                    black_box(next_id),
+                    black_box(Side::Buy),
+                    100.0,
+                    black_box(1.0),
+                );
                 let r = engine.submit(buy);
                 let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
                 engine.submit(refill);
@@ -147,20 +167,21 @@ fn bench_submit_with_decay(c: &mut Criterion) {
         fill_ask_book_same_price(&mut engine, 1, 100, 10.0);
         let mut next_id: u64 = 1000;
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(decay),
-            &decay,
-            |b, _| {
-                b.iter(|| {
-                    let buy = make_limit(black_box(next_id), black_box(Side::Buy), 100.0, black_box(1.0));
-                    let r = engine.submit(buy);
-                    let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
-                    engine.submit(refill);
-                    next_id = next_id.wrapping_add(1);
-                    black_box(r);
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(decay), &decay, |b, _| {
+            b.iter(|| {
+                let buy = make_limit(
+                    black_box(next_id),
+                    black_box(Side::Buy),
+                    100.0,
+                    black_box(1.0),
+                );
+                let r = engine.submit(buy);
+                let refill = make_limit(next_id + 1_000_000, Side::Sell, 100.0, 1.0);
+                engine.submit(refill);
+                next_id = next_id.wrapping_add(1);
+                black_box(r);
+            })
+        });
     }
     group.finish();
 }

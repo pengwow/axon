@@ -226,7 +226,11 @@ where
                 }
                 let delay = policy.delay_for(attempt + 1);
                 if delay > 0 {
-                    tracing::warn!(attempt = attempt + 1, delay_ms = delay, "retrying after error: {e}");
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        delay_ms = delay,
+                        "retrying after error: {e}"
+                    );
                     std::thread::sleep(std::time::Duration::from_millis(delay));
                 } else {
                     tracing::warn!(attempt = attempt + 1, "retrying after error: {e}");
@@ -285,7 +289,10 @@ mod tests {
     fn test_from_impact_error() {
         let impact_err = ImpactModelError::EmptyOrderBook;
         let core_err: Error = impact_err.into();
-        assert!(matches!(core_err, Error::Impact(ImpactModelError::EmptyOrderBook)));
+        assert!(matches!(
+            core_err,
+            Error::Impact(ImpactModelError::EmptyOrderBook)
+        ));
     }
 
     #[test]
@@ -299,7 +306,10 @@ mod tests {
     fn test_from_latency_error() {
         let l = LatencyModelError::NegativeStdDev(-1.0);
         let e: Error = l.into();
-        assert!(matches!(e, Error::Latency(LatencyModelError::NegativeStdDev(_))));
+        assert!(matches!(
+            e,
+            Error::Latency(LatencyModelError::NegativeStdDev(_))
+        ));
     }
 
     #[test]
@@ -497,8 +507,8 @@ mod tests {
     #[test]
     fn test_error_chain_in_complex_workflow() {
         // 1. 加载数据（基础错误 + 上下文）
-        let load_err: Result<()> = Err(Error::Other("network timeout".to_string()))
-            .context("加载市场数据");
+        let load_err: Result<()> =
+            Err(Error::Other("network timeout".to_string())).context("加载市场数据");
         assert!(load_err.is_err());
         let err = load_err.unwrap_err();
         let msg = err.to_string();

@@ -169,8 +169,8 @@ impl ExperimentTracker for MemoryTracker {
     }
 
     fn log_artifact(&self, name: &str, path: &Path) -> Result<(), TrackerError> {
-        let metadata = std::fs::metadata(path)
-            .map_err(|e| TrackerError::Io(format!("{path:?}: {e}")))?;
+        let metadata =
+            std::fs::metadata(path).map_err(|e| TrackerError::Io(format!("{path:?}: {e}")))?;
         let size = metadata.len();
         let content_hash = format!("{size:x}");
         let info = ArtifactInfo {

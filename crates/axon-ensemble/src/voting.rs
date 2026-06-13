@@ -37,10 +37,10 @@ impl VotingStrategy for HardVoteStrategy {
             ActionType::Buy => 0,
         };
         let mut entries: Vec<(ActionType, usize)> = votes.into_iter().collect();
-        entries.sort_by(|(a1, c1), (a2, c2)| {
-            c2.cmp(c1).then_with(|| priority(a2).cmp(&priority(a1)))
-        });
-        let (majority_action, winning_votes) = entries.into_iter().next().unwrap_or((ActionType::Hold, 0));
+        entries
+            .sort_by(|(a1, c1), (a2, c2)| c2.cmp(c1).then_with(|| priority(a2).cmp(&priority(a1))));
+        let (majority_action, winning_votes) =
+            entries.into_iter().next().unwrap_or((ActionType::Hold, 0));
 
         // 置信度 = 得票比例
         let confidence = winning_votes as f64 / predictions.len() as f64;

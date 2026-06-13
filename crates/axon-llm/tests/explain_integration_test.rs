@@ -121,10 +121,7 @@ impl Explainer for MockExplainer {
     ) -> Result<axon_explain::types::ActionAttribution, ExplainabilityError> {
         unimplemented!()
     }
-    fn get_attention_weights(
-        &self,
-        _o: &HashMap<String, f64>,
-    ) -> Option<Vec<AttentionWeights>> {
+    fn get_attention_weights(&self, _o: &HashMap<String, f64>) -> Option<Vec<AttentionWeights>> {
         None
     }
     fn generate_counterfactuals(
@@ -168,10 +165,7 @@ impl Explainer for SlowExplainer {
     ) -> Result<axon_explain::types::ActionAttribution, ExplainabilityError> {
         unimplemented!()
     }
-    fn get_attention_weights(
-        &self,
-        _o: &HashMap<String, f64>,
-    ) -> Option<Vec<AttentionWeights>> {
+    fn get_attention_weights(&self, _o: &HashMap<String, f64>) -> Option<Vec<AttentionWeights>> {
         None
     }
     fn generate_counterfactuals(

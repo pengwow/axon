@@ -82,7 +82,11 @@ fn bench_linear_impact(c: &mut Criterion) {
 
     c.bench_function("impact_linear", |b| {
         b.iter(|| {
-            let impact = m.compute_impact(black_box(Quantity::from_f64(10.0)), black_box(Side::Buy), black_box(&ob));
+            let impact = m.compute_impact(
+                black_box(Quantity::from_f64(10.0)),
+                black_box(Side::Buy),
+                black_box(&ob),
+            );
             black_box(impact);
         })
     });
@@ -94,20 +98,28 @@ fn bench_power_law_impact(c: &mut Criterion) {
 
     c.bench_function("impact_power_law", |b| {
         b.iter(|| {
-            let impact = m.compute_impact(black_box(Quantity::from_f64(10.0)), black_box(Side::Buy), black_box(&ob));
+            let impact = m.compute_impact(
+                black_box(Quantity::from_f64(10.0)),
+                black_box(Side::Buy),
+                black_box(&ob),
+            );
             black_box(impact);
         })
     });
 }
 
 fn bench_adaptive_impact(c: &mut Criterion) {
-    let m = AdaptiveImpactModel::new(Box::new(LinearImpactModel::new(0.05)), 2.0)
-        .with_volatility(0.5);
+    let m =
+        AdaptiveImpactModel::new(Box::new(LinearImpactModel::new(0.05)), 2.0).with_volatility(0.5);
     let ob = make_sample_orderbook(20);
 
     c.bench_function("impact_adaptive", |b| {
         b.iter(|| {
-            let impact = m.compute_impact(black_box(Quantity::from_f64(10.0)), black_box(Side::Buy), black_box(&ob));
+            let impact = m.compute_impact(
+                black_box(Quantity::from_f64(10.0)),
+                black_box(Side::Buy),
+                black_box(&ob),
+            );
             black_box(impact);
         })
     });
@@ -120,7 +132,11 @@ fn bench_impact_depth_scaling(c: &mut Criterion) {
         let ob = make_sample_orderbook(depth);
         group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, _| {
             b.iter(|| {
-                let impact = m.compute_impact(black_box(Quantity::from_f64(10.0)), black_box(Side::Buy), black_box(&ob));
+                let impact = m.compute_impact(
+                    black_box(Quantity::from_f64(10.0)),
+                    black_box(Side::Buy),
+                    black_box(&ob),
+                );
                 black_box(impact);
             })
         });
@@ -135,7 +151,11 @@ fn bench_impact_quantity_scaling(c: &mut Criterion) {
     for &qty in &[0.1_f64, 1.0, 10.0, 100.0, 1_000.0] {
         group.bench_with_input(BenchmarkId::from_parameter(qty), &qty, |b, _| {
             b.iter(|| {
-                let impact = m.compute_impact(black_box(Quantity::from_f64(qty)), black_box(Side::Buy), black_box(&ob));
+                let impact = m.compute_impact(
+                    black_box(Quantity::from_f64(qty)),
+                    black_box(Side::Buy),
+                    black_box(&ob),
+                );
                 black_box(impact);
             })
         });
@@ -282,12 +302,24 @@ fn bench_order_creation(c: &mut Criterion) {
 
 /// 构造一个 Tick 事件（市场数据）
 fn make_tick_event(builder: &mut EventBuilder, ts: Timestamp, price: f64, qty: f64) -> Event {
-    let tick = Tick::new(ts, Price::from_f64(price), Quantity::from_f64(qty), Side::Buy);
+    let tick = Tick::new(
+        ts,
+        Price::from_f64(price),
+        Quantity::from_f64(qty),
+        Side::Buy,
+    );
     builder.market_data(ts, MarketDataPayload::Tick(tick))
 }
 
 /// 构造一个 K线 事件
-fn make_bar_event(builder: &mut EventBuilder, ts: Timestamp, o: f64, h: f64, l: f64, c: f64) -> Event {
+fn make_bar_event(
+    builder: &mut EventBuilder,
+    ts: Timestamp,
+    o: f64,
+    h: f64,
+    l: f64,
+    c: f64,
+) -> Event {
     let bar = Bar {
         timestamp: ts,
         open: Price::from_f64(o),
@@ -309,7 +341,10 @@ struct CountingHandler {
 
 impl CountingHandler {
     fn new(interested: EventType) -> Self {
-        Self { count: 0, interested }
+        Self {
+            count: 0,
+            interested,
+        }
     }
 }
 
@@ -338,7 +373,14 @@ fn bench_event_builder_bar(c: &mut Criterion) {
     let ts = Timestamp::from_nanos(1_000);
     c.bench_function("event_builder_bar", |b| {
         b.iter(|| {
-            let evt = make_bar_event(black_box(&mut builder), black_box(ts), 100.0, 101.0, 99.0, 100.5);
+            let evt = make_bar_event(
+                black_box(&mut builder),
+                black_box(ts),
+                100.0,
+                101.0,
+                99.0,
+                100.5,
+            );
             black_box(evt);
         })
     });
@@ -481,7 +523,11 @@ fn bench_fee_calculate_taker(c: &mut Criterion) {
     c.bench_function("fee_calculate_taker", |b| {
         b.iter(|| {
             let _ = model
-                .calculate_fee(black_box(ExchangeId::Binance), black_box(&trade), black_box(TradeRole::Taker))
+                .calculate_fee(
+                    black_box(ExchangeId::Binance),
+                    black_box(&trade),
+                    black_box(TradeRole::Taker),
+                )
                 .unwrap();
         })
     });
@@ -495,7 +541,11 @@ fn bench_fee_calculate_maker(c: &mut Criterion) {
     c.bench_function("fee_calculate_maker", |b| {
         b.iter(|| {
             let _ = model
-                .calculate_fee(black_box(ExchangeId::Binance), black_box(&trade), black_box(TradeRole::Maker))
+                .calculate_fee(
+                    black_box(ExchangeId::Binance),
+                    black_box(&trade),
+                    black_box(TradeRole::Maker),
+                )
                 .unwrap();
         })
     });
@@ -513,7 +563,11 @@ fn bench_fee_calculate_throughput(c: &mut Criterion) {
             b.iter(|| {
                 for t in &trades {
                     let _ = model
-                        .calculate_fee(black_box(ExchangeId::Binance), black_box(t), black_box(TradeRole::Taker))
+                        .calculate_fee(
+                            black_box(ExchangeId::Binance),
+                            black_box(t),
+                            black_box(TradeRole::Taker),
+                        )
                         .unwrap();
                 }
             })

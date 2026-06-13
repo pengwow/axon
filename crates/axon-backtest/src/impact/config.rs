@@ -43,19 +43,14 @@ use axon_core::impact::{ImpactModelConfig, create_model};
 use crate::impact::impacted_engine::ImpactedMatchingEngine;
 
 /// 模型类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelType {
     /// 线性冲击
+    #[default]
     Linear,
     /// 幂律冲击
     PowerLaw,
-}
-
-impl Default for ModelType {
-    fn default() -> Self {
-        ModelType::Linear
-    }
 }
 
 /// 冲击模型配置子表
@@ -493,8 +488,7 @@ decay = 0.1
     // 抑制未使用导入警告
     #[allow(dead_code)]
     fn _use_types() {
-        let _m: Box<dyn axon_core::impact::ImpactModel> = Box::new(
-            axon_core::impact::LinearImpactModel::new(0.05),
-        );
+        let _m: Box<dyn axon_core::impact::ImpactModel> =
+            Box::new(axon_core::impact::LinearImpactModel::new(0.05));
     }
 }

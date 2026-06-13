@@ -370,11 +370,8 @@ mod tests {
             let book = Arc::clone(&ob);
             handles.push(thread::spawn(move || {
                 for q in 1..=PER_THREAD {
-                    let impact = model.compute_impact(
-                        Quantity::from_f64(q as f64),
-                        Side::Buy,
-                        &book,
-                    );
+                    let impact =
+                        model.compute_impact(Quantity::from_f64(q as f64), Side::Buy, &book);
                     // 幂律冲击：qty^k × coefficient × 累计深度
                     assert!(impact.total() > 0.0);
                     // 即时冲击 + 永久冲击 = total

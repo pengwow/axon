@@ -33,8 +33,8 @@ use std::collections::HashMap;
 use axon_hpo::config::{
     HPOConfig, PrunerConfig, PrunerType, SamplerConfig, SamplerType, StudyConfig, StudyDirection,
 };
-use axon_hpo::search_space::SearchSpaceDef;
 use axon_hpo::result::HPOResult;
+use axon_hpo::search_space::SearchSpaceDef;
 use axon_hpo::trial::{TrialResult, TrialState};
 use axon_registry::types::{ModelStage, SemVer};
 use axon_tracker::types::{MetricValue, ParamValue, RunStatus};
@@ -282,24 +282,28 @@ pub fn contract_walkforward_config_backward_compat() {
 pub fn contract_sampler_type_aliases() {
     // SamplerType 使用 adjacently-tagged 表示：{"sampler_type": "..."}
     // Random 别名：alias = "random"，rename_all = "snake_case" 自动产生 "random"
-    for alias in ["\"random\""] {
-        let json = format!(r#"{{"sampler_type":{alias}}}"#);
-        let de: SamplerType = serde_json::from_str(&json)
-            .unwrap_or_else(|_| panic!("Random 别名应兼容: {}", json));
-        assert!(matches!(de, SamplerType::Random));
-    }
+    let random_alias = "\"random\"";
+    let json = format!(r#"{{"sampler_type":{random_alias}}}"#);
+    let de: SamplerType =
+        serde_json::from_str(&json).unwrap_or_else(|_| panic!("Random 别名应兼容: {}", json));
+    assert!(matches!(de, SamplerType::Random));
     // CmaEs 别名：alias = "cma_es" + rename_all 把 CmaEs 转换为 cma_es
-    for alias in ["\"cma_es\""] {
-        let json = format!(r#"{{"sampler_type":{alias}}}"#);
-        let de: SamplerType = serde_json::from_str(&json)
-            .unwrap_or_else(|_| panic!("CmaEs 别名应兼容: {}", json));
-        assert!(matches!(de, SamplerType::CmaEs));
-    }
+    let cma_alias = "\"cma_es\"";
+    let json = format!(r#"{{"sampler_type":{cma_alias}}}"#);
+    let de: SamplerType =
+        serde_json::from_str(&json).unwrap_or_else(|_| panic!("CmaEs 别名应兼容: {}", json));
+    assert!(matches!(de, SamplerType::CmaEs));
     // 序列化：snake_case 形式
     let serialized = serde_json::to_string(&SamplerType::Random).unwrap();
-    assert!(serialized.contains("\"random\""), "Random 序列化应包含 \"random\": {serialized}");
+    assert!(
+        serialized.contains("\"random\""),
+        "Random 序列化应包含 \"random\": {serialized}"
+    );
     let serialized = serde_json::to_string(&SamplerType::CmaEs).unwrap();
-    assert!(serialized.contains("\"cma_es\""), "CmaEs 序列化应包含 \"cma_es\": {serialized}");
+    assert!(
+        serialized.contains("\"cma_es\""),
+        "CmaEs 序列化应包含 \"cma_es\": {serialized}"
+    );
 }
 
 pub fn contract_sampler_type_tpe_with_defaults() {
@@ -353,7 +357,7 @@ pub fn contract_study_config_full_roundtrip() {
 pub fn contract_param_value_all_variants() {
     let cases = [
         ParamValue::Int(42),
-        ParamValue::Float(3.14),
+        ParamValue::Float(std::f64::consts::PI),
         ParamValue::String("hello".into()),
         ParamValue::Bool(true),
         ParamValue::List(vec![ParamValue::Int(1), ParamValue::Int(2)]),
@@ -457,7 +461,13 @@ pub fn contract_hpo_result_required_fields() {
     let result = HPOResult::empty(cfg);
     let value: serde_json::Value = serde_json::to_value(&result).unwrap();
     let obj = value.as_object().expect("应为 object");
-    for required in ["study_config", "best_trial", "all_trials", "param_importances", "elapsed_ms"] {
+    for required in [
+        "study_config",
+        "best_trial",
+        "all_trials",
+        "param_importances",
+        "elapsed_ms",
+    ] {
         assert!(obj.contains_key(required), "HPOResult 缺少字段: {required}");
     }
 }
@@ -465,7 +475,13 @@ pub fn contract_hpo_result_required_fields() {
 /// 验证 HPOConfig 主要字段存在
 pub fn contract_hpo_config_required_fields() {
     let mut search_space = HashMap::new();
-    search_space.insert("lr".to_string(), SearchSpaceDef::Uniform { low: 1e-5, high: 1e-1 });
+    search_space.insert(
+        "lr".to_string(),
+        SearchSpaceDef::Uniform {
+            low: 1e-5,
+            high: 1e-1,
+        },
+    );
     let cfg = HPOConfig::new("test", search_space, 10);
     let value: serde_json::Value = serde_json::to_value(&cfg).unwrap();
     let obj = value.as_object().expect("应为 object");
@@ -475,7 +491,10 @@ pub fn contract_hpo_config_required_fields() {
     // HPORunConfig 关键字段
     let hpo = &obj["hpo"];
     for required in ["n_trials", "n_jobs"] {
-        assert!(hpo.get(required).is_some(), "HPORunConfig 缺少字段: {required}");
+        assert!(
+            hpo.get(required).is_some(),
+            "HPORunConfig 缺少字段: {required}"
+        );
     }
 }
 
@@ -484,14 +503,20 @@ pub fn contract_hpo_config_required_fields() {
 // ───────────────────────────────────────────────────────────────────
 
 /// 序列化 - 反序列化后关键数值字段（f64）应保持 < 1e-12 误差
-pub fn assert_f64_roundtrip<T: Serialize + DeserializeOwned + std::fmt::Debug>(value: &T, field_path: &str) {
+pub fn assert_f64_roundtrip<T: Serialize + DeserializeOwned + std::fmt::Debug>(
+    value: &T,
+    field_path: &str,
+) {
     let json = serde_json::to_string(value).unwrap();
     let de: serde_json::Value = serde_json::from_str(&json).unwrap();
     let original_value: serde_json::Value = serde_json::to_value(value).unwrap();
     let orig = original_value.pointer(field_path).unwrap();
     let restored = de.pointer(field_path).unwrap();
     if let (Some(a), Some(b)) = (orig.as_f64(), restored.as_f64()) {
-        assert!((a - b).abs() < 1e-12, "字段 {field_path} 精度损失: {a} vs {b}");
+        assert!(
+            (a - b).abs() < 1e-12,
+            "字段 {field_path} 精度损失: {a} vs {b}"
+        );
     }
 }
 

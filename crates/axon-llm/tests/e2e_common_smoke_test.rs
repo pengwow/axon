@@ -19,10 +19,7 @@ use axon_llm::types::TokenUsage;
 fn fixtures_dir_ends_with_e2e_common_fixtures() {
     let p = common::fixtures_dir();
     let s = p.to_string_lossy();
-    assert!(
-        s.ends_with("tests/e2e/common/fixtures"),
-        "got: {s}"
-    );
+    assert!(s.ends_with("tests/e2e/common/fixtures"), "got: {s}");
 }
 
 #[test]

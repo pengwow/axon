@@ -12,9 +12,9 @@ use axon_hpo::config::{
     StudyConfig, StudyDirection,
 };
 use axon_hpo::trial::TrialState;
+use axon_tracker::ExperimentTracker;
 use axon_tracker::backends::MemoryTracker;
 use axon_tracker::types::{MetricValue, ParamValue};
-use axon_tracker::ExperimentTracker;
 
 use crate::fixtures::{make_trial, parabolic_objective};
 
@@ -47,7 +47,9 @@ pub fn run_hpo_trial_tracking() {
         // 记录目标值
         tracker.log_metric("objective_value", *value, i).unwrap();
         // 记录 step（模拟训练步数）
-        tracker.log_metric("training_step", (i * 100) as f64, i).unwrap();
+        tracker
+            .log_metric("training_step", (i * 100) as f64, i)
+            .unwrap();
     }
 
     // 验证 tracker 记录完整

@@ -2,9 +2,7 @@
 //!
 //! 验证自定义策略实现能被集成框架使用。
 
-use axon_ensemble::{
-    Action, ActionProbabilities, ActionType, ModelType, Observation, Policy,
-};
+use axon_ensemble::{Action, ActionProbabilities, ActionType, ModelType, Observation, Policy};
 
 /// 简单规则策略：所有观测都返回 Buy
 struct AlwaysBuyPolicy {

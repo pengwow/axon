@@ -25,12 +25,12 @@ pub mod retry;
 pub mod streaming;
 
 // 公共导出
-pub use cost::{pricing_for, register_pricing, CostTracker, ModelPricing};
+pub use cost::{CostTracker, ModelPricing, pricing_for, register_pricing};
 pub use mock::MockBackend;
 pub use openai_compat::{BackendInitError, OpenAICompatBackend, OpenAICompatConfig};
 pub use recording::{
-    sanitize_request, sanitize_response, Fixture, Mode, RecordedRequest, RecordedResponse,
-    RecordingLayer,
+    Fixture, Mode, RecordedRequest, RecordedResponse, RecordingLayer, sanitize_request,
+    sanitize_response,
 };
-pub use retry::{with_backoff, BackoffConfig};
-pub use streaming::{parse_sse_body, TokenDelta};
+pub use retry::{BackoffConfig, with_backoff};
+pub use streaming::{TokenDelta, parse_sse_body};

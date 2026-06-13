@@ -10,19 +10,19 @@
 
 use std::hint::black_box;
 
+use axon_rl::ObservationSpace;
 use axon_rl::action::state::PortfolioState;
 use axon_rl::action::types::{
     Action, ActionSpace, ContinuousActionSpace, DiscreteActionSpace, TradingDirection,
 };
+use axon_rl::env::TradingEnv;
 use axon_rl::env::config::EnvConfig;
 use axon_rl::env::types::MarketBar;
-use axon_rl::env::TradingEnv;
-use axon_rl::observation::types::{FeatureConfig, FeatureSource, MarketState, NormalizerType};
 use axon_rl::observation::DefaultObservationSpace;
+use axon_rl::observation::types::{FeatureConfig, FeatureSource, MarketState, NormalizerType};
+use axon_rl::reward::RewardFn;
 use axon_rl::reward::pnl::PnLReward;
 use axon_rl::reward::sharpe::SharpeReward;
-use axon_rl::reward::RewardFn;
-use axon_rl::ObservationSpace;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 // ─── 辅助函数 ─────────────────────────────────────────
@@ -181,9 +181,7 @@ fn bench_sharpe_reward(c: &mut Criterion) {
     let s2 = make_portfolio_state(100_500.0, 0.0);
     let action = Action::continuous(vec![0.0]);
     // 构造历史收益率
-    let history: Vec<f64> = (0..32)
-        .map(|i| (i as f64 * 0.0001).sin() * 0.01)
-        .collect();
+    let history: Vec<f64> = (0..32).map(|i| (i as f64 * 0.0001).sin() * 0.01).collect();
     c.bench_function("reward_sharpe", |b| {
         b.iter(|| {
             let r = r.calculate(
@@ -260,7 +258,7 @@ fn bench_env_episode(c: &mut Criterion) {
                 if env.step(black_box(&action)).unwrap().2 {
                     break;
                 }
-                let _ = black_box(());
+                black_box(());
             }
         })
     });

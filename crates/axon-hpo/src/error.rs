@@ -74,17 +74,21 @@ mod tests {
         // 不可重试
         assert!(!HPOError::Config("bad".into()).is_retryable());
         assert!(!HPOError::SearchSpace("dup".into()).is_retryable());
-        assert!(!HPOError::TrialFailed {
-            trial_id: 1,
-            message: "x".into()
-        }
-        .is_retryable());
+        assert!(
+            !HPOError::TrialFailed {
+                trial_id: 1,
+                message: "x".into()
+            }
+            .is_retryable()
+        );
         assert!(!HPOError::Optuna("x".into()).is_retryable());
-        assert!(!HPOError::DirectionsMismatch {
-            expected: 1,
-            got: 2
-        }
-        .is_retryable());
+        assert!(
+            !HPOError::DirectionsMismatch {
+                expected: 1,
+                got: 2
+            }
+            .is_retryable()
+        );
         assert!(!HPOError::MissingValues(0).is_retryable());
     }
 

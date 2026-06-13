@@ -51,7 +51,9 @@ async fn greeting_001_returns_text_via_recording_layer() {
     assert!(!content.is_empty(), "content should be non-empty");
 
     let prompt = resp.body["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize;
-    let completion = resp.body["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize;
+    let completion = resp.body["usage"]["completion_tokens"]
+        .as_u64()
+        .unwrap_or(0) as usize;
     let usage = axon_llm::types::TokenUsage::new(prompt, completion);
     common::assert_cost_under(&usage, MODEL, 0.001);
 }

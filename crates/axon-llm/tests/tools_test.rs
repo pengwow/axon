@@ -32,8 +32,8 @@ impl Tool for EchoTool {
     }
     async fn execute(&self, arguments: &str) -> Result<String, ToolError> {
         // 验证 arguments 必须是合法 JSON
-        let v: serde_json::Value =
-            serde_json::from_str(arguments).map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        let v: serde_json::Value = serde_json::from_str(arguments)
+            .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         let text = v["text"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("缺少 text 字段".into()))?;
@@ -109,7 +109,7 @@ async fn test_tool_registry_lookups_by_name() {
     let result = tool.execute(r#"{"text":"x"}"#).await.unwrap();
     assert_eq!(result, "x");
 
-    assert!(registry.get("nonexistent").is_none());
+    assert!(!registry.contains_key("nonexistent"));
 }
 
 // ─── ToolError 错误分类 ──────────────────────────────────────

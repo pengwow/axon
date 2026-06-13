@@ -4,8 +4,14 @@
 //! 用随机输入验证核心 API 的代数性质(不变量),与单元测试互补:
 //! - 单元测试:固定输入覆盖已知边界
 //! - proptest:随机输入覆盖代数性质
+//!
+//! PR5 适配:`Dataset::new(rows, schema, ...)` 改为 `Dataset::from_ticks(rows, ...)`;
+//! `ds.filter` 谓词签名从 `Fn(&Tick) -> bool` 改为 `Fn(&RecordBatch) -> ArrayRef`。
 
+use arrow::array::{Array, Float64Array};
+use arrow::record_batch::RecordBatch;
 use proptest::prelude::*;
+use std::sync::Arc;
 
 use crate::dataset::Dataset;
 use crate::types::{DataRequest, Frequency};
@@ -46,13 +52,28 @@ proptest! {
         threshold in 0.0f64..1_000_000.0,
     ) {
         let req = make_req();
-        let ds = Dataset::new(ticks.clone(), vec![], "fuzz".into(), req);
-        // 谓词:价格 > threshold
-        let filtered = ds.filter(|t| t.price.as_f64() > threshold);
+        let ds = Dataset::from_ticks(ticks.clone(), "fuzz".into(), req).expect("from_ticks");
+        // PR5 谓词:列式 `px > threshold`(走 `arrow::compute::kernels::cmp::gt`)
+        let filtered = ds
+            .filter(|batch: &RecordBatch| -> Arc<dyn Array> {
+                let px = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .expect("col 1 Float64Array");
+                // `gt` 接受 `&dyn Datum`,用 `Float64Array::new_scalar` 包装标量
+                let mask = arrow::compute::kernels::cmp::gt(
+                    px,
+                    &Float64Array::new_scalar(threshold),
+                )
+                .expect("gt");
+                Arc::new(mask) as Arc<dyn Array>
+            })
+            .expect("filter");
         // 长度上界
         prop_assert!(filtered.len() <= ds.len());
         // 每个保留项必须满足 f
-        for t in filtered.iter() {
+        for t in filtered.iter_rows() {
             prop_assert!(t.price.as_f64() > threshold);
         }
     }
@@ -64,7 +85,7 @@ proptest! {
         n_raw in 0usize..200,
     ) {
         let req = make_req();
-        let ds = Dataset::new(ticks, vec![], "fuzz".into(), req);
+        let ds = Dataset::from_ticks(ticks, "fuzz".into(), req).expect("from_ticks");
         let n = n_raw.min(ds.len());
         let taken = ds.take(n);
         let skipped = taken.skip(n);
@@ -82,7 +103,7 @@ proptest! {
         end_seq in 0u64..1_000_000,
     ) {
         let req = make_req();
-        let ds = Dataset::new(ticks, vec![], "fuzz".into(), req);
+        let ds = Dataset::from_ticks(ticks, "fuzz".into(), req).expect("from_ticks");
         // 让 start <= end(随机生成的 start_seq/end_seq 可能倒置)
         let (lo, hi) = if start_seq <= end_seq {
             (start_seq, end_seq)
@@ -91,24 +112,24 @@ proptest! {
         };
         let start = Timestamp::from_nanos(lo as i64 * 1_000_000_000);
         let end = Timestamp::from_nanos(hi as i64 * 1_000_000_000);
-        let ranged = ds.by_time_range(start, end);
+        let ranged = ds.by_time_range(start, end).expect("by_time_range");
         // 长度上界
         prop_assert!(ranged.len() <= ds.len());
         // 边界包含
-        for t in ranged.iter() {
+        for t in ranged.iter_rows() {
             let ts = t.timestamp.nanos;
             prop_assert!(ts >= start.nanos);
             prop_assert!(ts <= end.nanos);
         }
     }
 
-    /// 不变量:相同 rows + 相同 schema 产生相同 checksum(与 source/req 无关)
+    /// 不变量:相同 rows 产生相同 checksum(与 source/req 无关)
     #[test]
     fn dataset_checksum_is_pure(ticks in ticks_strategy()) {
         let req1 = DataRequest::new("A", Utc::now(), Utc::now(), Frequency::Tick);
         let req2 = DataRequest::new("B", Utc::now(), Utc::now(), Frequency::Tick);
-        let ds1 = Dataset::new(ticks.clone(), vec![], "src1".into(), req1);
-        let ds2 = Dataset::new(ticks, vec![], "src2".into(), req2);
+        let ds1 = Dataset::from_ticks(ticks.clone(), "src1".into(), req1).expect("from_ticks");
+        let ds2 = Dataset::from_ticks(ticks, "src2".into(), req2).expect("from_ticks");
         // 同样 rows + schema 产生同样 checksum(与 source/req 无关)
         prop_assert_eq!(&ds1.checksum, &ds2.checksum);
         // 校验和是 SHA256(64 hex chars)

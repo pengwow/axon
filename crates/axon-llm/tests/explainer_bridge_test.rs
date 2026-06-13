@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use axon_explain::error::ExplainabilityError;
 use axon_explain::traits::Explainer;
 use axon_explain::types::{ActionSnapshot, Explanation};
-use axon_llm::explain::{DecisionRecord, ExplainerBridge, ExplanationStore, ExplainMode};
+use axon_llm::explain::{DecisionRecord, ExplainMode, ExplainerBridge, ExplanationStore};
 
 fn sample_record(id: &str) -> DecisionRecord {
     DecisionRecord::new(
@@ -51,7 +51,10 @@ impl Explainer for MockExplainer {
             std::thread::sleep(self.delay);
         }
         if self.should_fail {
-            return Err(ExplainabilityError::FeatureMismatch { expected: 3, actual: 5 });
+            return Err(ExplainabilityError::FeatureMismatch {
+                expected: 3,
+                actual: 5,
+            });
         }
         Ok(Explanation {
             id: format!("exp-{}", action.entry_price),
@@ -148,7 +151,11 @@ async fn test_bridge_does_not_block_under_slow_explainer() {
     assert!(result.is_ok());
     // spawn_blocking 在多线程 runtime 下会并发执行，单次 200ms 计算大约 200-300ms
     // 这里只验证"能跑通"和"会写入 store"
-    assert!(elapsed.as_millis() < 1000, "elapsed {}ms 异常", elapsed.as_millis());
+    assert!(
+        elapsed.as_millis() < 1000,
+        "elapsed {}ms 异常",
+        elapsed.as_millis()
+    );
 
     let exp = store.get("slow-id").await;
     assert!(exp.is_some());

@@ -72,6 +72,10 @@ pub enum DataError {
     /// I/O 错误(std::io 转换)
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// 内部错误(Arrow / IO 转换失败、不可恢复的内部状态)
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 /// 统一 Result 类型别名
@@ -105,7 +109,11 @@ mod tests {
 
     #[test]
     fn corrupt_data_displays_with_location() {
-        let loc = CsvLocation { file: "x.csv".into(), line: 5, column: None };
+        let loc = CsvLocation {
+            file: "x.csv".into(),
+            line: 5,
+            column: None,
+        };
         let err = DataError::CorruptData {
             expected: "f64".into(),
             actual: "NaN".into(),

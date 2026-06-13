@@ -9,7 +9,7 @@
 //! - [`dataset`]:数据集合（内存表示 + 行式迭代）
 //! - [`traits`]:数据源抽象 `DataSource` trait
 //! - [`sources`]:具体数据源实现（默认仅暴露 `MockSource`,csv/ws feature-gated）
-//! - [`pipeline`]:特征管道（归一化、滑动窗口）骨架
+//! - [`pipeline`][]:特征管道（归一化、滑动窗口）骨架
 //!
 //! ## Feature flag
 //!

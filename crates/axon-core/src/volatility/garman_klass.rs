@@ -190,7 +190,8 @@ impl GarmanKlassVolatility {
             // 简化的滑动平均：减去最早值加上新值（实际应维护循环缓冲）
             // 此处采用 EMA 近似：(1 - 1/window) × old + new / window
             let alpha = 1.0 / self.window as f64;
-            self.variance_sum = (1.0 - alpha) * self.variance_sum + alpha * var * self.window as f64;
+            self.variance_sum =
+                (1.0 - alpha) * self.variance_sum + alpha * var * self.window as f64;
         } else {
             self.variance_sum += var;
             self.count += 1;

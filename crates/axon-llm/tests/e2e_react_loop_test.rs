@@ -27,7 +27,9 @@ async fn react_loop_with_tool_result_yields_text() {
 
     // 多轮 messages:system + user + assistant(tool_call) + tool(result)
     let messages = vec![
-        Message::system("You are a trading assistant. Use the tools to gather data and place trades."),
+        Message::system(
+            "You are a trading assistant. Use the tools to gather data and place trades.",
+        ),
         Message::user("What is the current price of AAPL?"),
         Message {
             role: Role::Assistant,

@@ -134,9 +134,8 @@ async fn computed_decision_id_round_trips_via_query_tool() {
         }
     }
 
-    let backend: Box<dyn LLMBackend> = Box::new(axon_llm::backends::MockBackend::text_only(
-        "explained",
-    ));
+    let backend: Box<dyn LLMBackend> =
+        Box::new(axon_llm::backends::MockBackend::text_only("explained"));
     let explainer: StdArc<dyn Explainer> = StdArc::new(StubExplainer);
     let agent = ReActAgent::with_explainer(backend, AgentConfig::default(), explainer);
     let store: Arc<_> = agent.explanation_store().expect("explain feature enabled");

@@ -8,8 +8,8 @@
 //!
 //! 参考：Lundberg & Lee (2017) "A Unified Approach to Interpreting Model Predictions"
 
-use rand::{rngs::StdRng, Rng, SeedableRng};
 use rand::seq::SliceRandom;
+use rand::{SeedableRng, rngs::StdRng};
 use tracing::debug;
 
 use crate::error::ExplainabilityError;
@@ -19,7 +19,8 @@ use crate::traits::ModelPredictor;
 pub struct KernelSHAP {
     /// 底层模型
     model: Box<dyn ModelPredictor>,
-    /// 背景数据集（n_samples × n_features）
+    /// 背景数据集（n_samples × n_features,API 保留以便后续可视化/复用,目前仅 background_mean 被实际使用)
+    #[allow(dead_code)]
     background: Vec<Vec<f64>>,
     /// 背景数据均值（n_features）
     background_mean: Vec<f64>,
@@ -29,7 +30,11 @@ pub struct KernelSHAP {
 
 impl KernelSHAP {
     /// 创建 KernelSHAP
-    pub fn new(model: Box<dyn ModelPredictor>, background: Vec<Vec<f64>>, n_samples: usize) -> Self {
+    pub fn new(
+        model: Box<dyn ModelPredictor>,
+        background: Vec<Vec<f64>>,
+        n_samples: usize,
+    ) -> Self {
         let background_mean = Self::compute_mean(&background);
         let n_samples = n_samples.max(2);
         Self {
@@ -72,10 +77,7 @@ impl KernelSHAP {
     }
 
     /// 尝试计算 SHAP 值
-    pub fn try_compute_shap(
-        &self,
-        observation: &[f64],
-    ) -> Result<Vec<f64>, ExplainabilityError> {
+    pub fn try_compute_shap(&self, observation: &[f64]) -> Result<Vec<f64>, ExplainabilityError> {
         let n_features = self.background_mean.len();
         if observation.len() != n_features {
             return Err(ExplainabilityError::FeatureMismatch {
@@ -121,7 +123,9 @@ impl KernelSHAP {
         if total <= self.n_samples {
             // 全部枚举
             for mask in 0..total {
-                if mask == 0 || mask == total - 1 { continue; }
+                if mask == 0 || mask == total - 1 {
+                    continue;
+                }
                 let coalition: Vec<bool> = (0..n_features).map(|i| (mask >> i) & 1 == 1).collect();
                 coalitions.push(coalition);
             }
@@ -130,7 +134,9 @@ impl KernelSHAP {
             let mut all_masks: Vec<usize> = (0..total).collect();
             all_masks.shuffle(rng);
             for &mask in all_masks.iter().take(self.n_samples) {
-                if mask == 0 || mask == total - 1 { continue; }
+                if mask == 0 || mask == total - 1 {
+                    continue;
+                }
                 let coalition: Vec<bool> = (0..n_features).map(|i| (mask >> i) & 1 == 1).collect();
                 coalitions.push(coalition);
             }
@@ -178,12 +184,7 @@ impl KernelSHAP {
 
     /// 加权线性回归（最小二乘）
     /// 使用正规方程：(X^T W X) β = X^T W y
-    fn weighted_linear_regression(
-        &self,
-        x: &[Vec<f64>],
-        y: &[f64],
-        weights: &[f64],
-    ) -> Vec<f64> {
+    fn weighted_linear_regression(&self, x: &[Vec<f64>], y: &[f64], weights: &[f64]) -> Vec<f64> {
         let n = x.len();
         let p = x[0].len();
         assert_eq!(y.len(), n);
@@ -204,12 +205,11 @@ impl KernelSHAP {
         }
 
         // Tikhonov 正则化以保证数值稳定
-        for j in 0..p {
-            xtwx[j][j] += 1e-6;
+        for (j, row) in xtwx.iter_mut().enumerate().take(p) {
+            row[j] += 1e-6;
         }
 
-        solve_linear_system(&xtwx, &xtwy)
-            .unwrap_or_else(|_| vec![0.0; p])
+        solve_linear_system(&xtwx, &xtwy).unwrap_or_else(|_| vec![0.0; p])
     }
 
     /// 计算列均值
@@ -249,9 +249,7 @@ fn solve_linear_system(a: &[Vec<f64>], b: &[f64]) -> Result<Vec<f64>, &'static s
     let mut aug: Vec<Vec<f64>> = (0..n)
         .map(|i| {
             let mut row = vec![0.0; n + 1];
-            for j in 0..n {
-                row[j] = a[i][j];
-            }
+            row[..n].copy_from_slice(&a[i][..n]);
             row[n] = b[i];
             row
         })
@@ -276,8 +274,10 @@ fn solve_linear_system(a: &[Vec<f64>], b: &[f64]) -> Result<Vec<f64>, &'static s
         // 消去
         for k in (i + 1)..n {
             let factor = aug[k][i] / aug[i][i];
-            for j in i..=n {
-                aug[k][j] -= factor * aug[i][j];
+            // 复制 pivot 行到本地 Vec,避免同时借用 aug[k] 与 aug[i] 触发的借用冲突
+            let pivot_row: Vec<f64> = aug[i][i..=n].to_vec();
+            for (j, t) in aug[k][i..=n].iter_mut().enumerate() {
+                *t -= factor * pivot_row[j];
             }
         }
     }

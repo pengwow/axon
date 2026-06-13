@@ -615,6 +615,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Benchmark group `parquet_load`:1k/10k/100k rows 加载吞吐(实测 187µs / 1.52ms / 16.5ms)
   - 3 个测试 fixture:`sample_basic.parquet` / `sample_bad_schema.parquet` / `sample_bad_type.parquet`(用 `tests/fixtures/generate_sample.py` 脚本 + pyarrow 23 生成)
   - 验收:parquet-source feature 单独启用可编译,3 个新集成测试通过,axon-data 0 新 clippy 警告,基线 56 tests 无回归(workspace 全量 ~1542 tests 通过)
+- **`axon-data` PR4 真流式 row group 读取(增量)**:
+  - 重写 `ParquetSource::stream()`:`spawn_blocking` 启动后台 reader + `tokio::sync::mpsc::channel`(容量 = batch_size)推送 `DataResult<Tick>`
+  - 内存复杂度从 O(总行数) 降到 O(batch_size),大文件(100k+)不 OOM
+  - 可中断语义:caller `take(n)` 提前退出 → `RowGroupStream` drop → rx drop → 后台 task 自动退出
+  - 错误传播:reader 错误(含 schema 不匹配、文件打开失败、record batch 解码失败)通过 stream 第一个 `Err` 传出,符合标准 stream 错误语义
+  - 新增内部结构 `RowGroupStream`(`Stream` 实现,持有 receiver + JoinHandle,`poll_next` 通过 `Pin::as_mut` 转发 receiver wake)
+  - 新增私有方法 `stream_sync`(在 spawn_blocking 中执行,逐 batch 解码后 `tx.blocking_send`;所有错误用 `match` 显式 send+return 替代 `?`,确保统一走 stream 错误通道)
+  - 集成测试 3 个新 case:`_stream_full_yields_n_ticks`(全量 yield)/ `_stream_take_2_breaks_early`(caller 提前中断,后台 task 退出)/ `_stream_propagates_schema_error`(schema 错误作为 stream 首项 Err 传出)
+  - Bench group `parquet_stream`:对比 `query_take_10` vs `stream_take_10`(10k/100k rows)— 实测 **100k 加速 165x**(18.6ms → 112.7µs),10k 加速 21x(1.6ms → 76.5µs)
+  - API 不破坏:`query()` 仍为全量;`stream()` 升级为真流式(对外行为更优)
+  - 验收:60 → 63 tests(57 lib + 6 doc + 14 integration),0 新 clippy 警告,workspace 全量 1549 tests 通过无回归
+- **`axon-data` PR5 M2 升级 Dataset 为 Arrow RecordBatch 列存(增量)**:
+  - **核心改造**:`Dataset` 内部存储从行式 `Vec<Tick>` 升级为列式 `Vec<RecordBatch>`,所有行级 API(`iter_rows` / `take` / `skip` / `last_n` / `filter` / `by_time_range` / `checksum`)保持对外不变
+  - **统一 Schema**:`Dataset::dataset_schema()` 使用 `std::sync::OnceLock` 单例,4 列严格定义:`timestamp`(int64, ns)/ `price`(f64)/ `quantity`(f64)/ `side`(utf8),所有数据源共享
+  - **零拷贝构造**:CSV / Parquet 数据源直接构建 Arrow 数组(`Int64Array` / `Float64Array` / `StringArray`),不再走 `Vec<Tick>` 中转
+  - **DataSource trait 升级**:`stream()` 签名从 `Stream<Item = DataResult<Tick>>` 改为 `Stream<Item = DataResult<RecordBatch>>`,ParquetSource 后台 task 直接 yield 批,流式语义保持
+  - **行级适配**:`iter_rows()` 内部 downcast 4 个 array 重建 `Tick` 序列,业务侧无感知;checksum 仍按 PR1 行序计算(`timestamp:price:quantity:side` → `sha256`),保证跨 PR 一致性
+  - **依赖升级**:`arrow = "53"` 提升为 `axon-data` 默认依赖(无 feature gate);`parquet-source` feature 简化为仅 `parquet`(不再 `dep:arrow`)
+  - **测试**:
+    - 集成测试新增 3 个 case:`_query_returns_record_batch_dataset` / `_query_preserves_checksum_format` / `_stream_full_yields_n_batches` / `_stream_take_1_batch_breaks_early` / `_stream_propagates_schema_error`
+    - fuzz 测试 `dataset_checksum_is_pure` / `dataset_filter_count_lte_input` / `dataset_take_skip_inverse` / `dataset_by_time_range_bounds_inclusive` 全部沿用
+  - **验收**:67 tests(46 unit + 16 integration + 5 doc),workspace 全量回归 0 失败,axon-data 0 新 clippy 警告
 
 - **告警抑制审计** (workspace rule #4, commit 8ab90e7):
   - 删除 `live_trading_demo.rs` `Tool` variant 上的 `#[allow(dead_code)]`(变体已在 match / Display 中使用,rustc 不报警)
@@ -651,6 +673,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Quantity::from_f64` 拒绝负数与 `Position` 需求冲突 — 解除负数限制，允许 `Position` 用负数表示空头持仓；同步更新 `Tick` 验证测试以反映新语义
 - `Symbol` 缺少 `Default` 实现 — 派生 `Default` 使其可用于 `Position::default()`
 - `Currency::default()` 期望返回 `USD` 而非 `[0, 0, 0]` — 手动实现 `Default` 返回 `Self::USD`
+- **CI 修复**（GitHub Actions `cargo fmt` + `cargo clippy -D warnings` 报错）：
+  - `axon-data/benches/axon_data_bench.rs`：`use tempfile::NamedTempFile;` 未在所有 feature 组合下使用 — 加 `#[cfg(any(feature = "csv-source", feature = "parquet-source"))]` feature gate
+  - `axon-data/benches/axon_data_bench.rs`：`use futures::StreamExt;` 在 `bench_parquet_stream` 内部未直接使用（代码走全限定 `futures::StreamExt::for_each`）— 改为注释说明并删除冗余 import
+  - `crates/axon-data/benches/axon_data_bench.rs` import 顺序 — 让 `MockSource` 排在 `CsvSource` 之后（rustfmt 调整）
+  - `crates/axon-explain/tests/explainer_test.rs:125` `ok_or` 闭包体缩进 — rustfmt 自动调整
+  - `crates/axon-llm/src/react_agent.rs:174` `if let` 链下代码块缩进 — rustfmt 自动调整
+  - **验证**：`cargo fmt --all -- --check` ✅ / `cargo clippy --workspace --all-targets -- -D warnings` ✅ / `cargo test --workspace` ✅（axon-data 67 tests + workspace 全量无回归）
 
 ### Security
 

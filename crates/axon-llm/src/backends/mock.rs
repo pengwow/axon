@@ -68,8 +68,7 @@ impl Default for MockBackend {
 impl LLMBackend for MockBackend {
     async fn complete(&self, _messages: &[Message]) -> Result<LLMResponse, LLMError> {
         let mut g = self.responses.lock().expect("mock poisoned");
-        g.pop_front()
-            .ok_or(LLMError::MockExhausted)
+        g.pop_front().ok_or(LLMError::MockExhausted)
     }
 
     async fn complete_with_tools(

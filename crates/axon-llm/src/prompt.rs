@@ -74,7 +74,8 @@ impl PromptTemplate {
 重要规则：
 - 不要编造数据，使用工具获取真实数据
 - 答案必须基于真实数据，不确定时明确说明
-- 给出置信度和风险等级"#.to_string(),
+- 给出置信度和风险等级"#
+                .to_string(),
             user: "分析 {symbol} 在 {timeframe} 时间周期的市场状况".to_string(),
             few_shot: vec![],
         }

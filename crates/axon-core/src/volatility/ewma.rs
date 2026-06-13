@@ -197,18 +197,22 @@ mod tests {
 
     #[test]
     fn test_with_initial_variance_rejects_negative() {
-        assert!(EwmaVolatility::new(0.94)
-            .unwrap()
-            .with_initial_variance(-0.1)
-            .is_err());
+        assert!(
+            EwmaVolatility::new(0.94)
+                .unwrap()
+                .with_initial_variance(-0.1)
+                .is_err()
+        );
     }
 
     #[test]
     fn test_with_initial_variance_rejects_nan() {
-        assert!(EwmaVolatility::new(0.94)
-            .unwrap()
-            .with_initial_variance(f64::NAN)
-            .is_err());
+        assert!(
+            EwmaVolatility::new(0.94)
+                .unwrap()
+                .with_initial_variance(f64::NAN)
+                .is_err()
+        );
     }
 
     #[test]

@@ -34,14 +34,14 @@
 
 ### 里程碑验收
 
-| 里程碑 | 验收标准 | 状态 | 证据 |
-| --- | --- | --- | --- |
-| M0 | 骨架就绪 | ✅ | 10 crate workspace + CI + ADR |
-| M1 | 引擎核心：单资产回测 | ✅ | L1/L2/L3 撮合 + 事件队列 + 调度器 + 冲击/延迟/费用 |
-| M2 | RL 就绪：Python 端可训练基础策略 | ✅ | `axon_rl.TradingEnv` + VecEnv + 6 个训练示例 |
-| **M3** | **训练管线：端到端 HPO 闭环** | **✅** | **HPO + Walk-forward + Tracker + Registry + Distributed + 集成测试** |
-| M4 | 生产就绪：模拟盘 7×24 无故障 | ⏳ | Phase 3 未启动（推理/交易所/风控/OMS/监控） |
-| M5 | AI 高级功能 | ⏳ | Phase 4 未启动（LLM/集成/可解释性） |
+| 里程碑    | 验收标准                  | 状态    | 证据                                                               |
+| ------ | --------------------- | ----- | ---------------------------------------------------------------- |
+| M0     | 骨架就绪                  | ✅     | 10 crate workspace + CI + ADR                                    |
+| M1     | 引擎核心：单资产回测            | ✅     | L1/L2/L3 撮合 + 事件队列 + 调度器 + 冲击/延迟/费用                              |
+| M2     | RL 就绪：Python 端可训练基础策略 | ✅     | `axon_rl.TradingEnv` + VecEnv + 6 个训练示例                          |
+| **M3** | **训练管线：端到端 HPO 闭环**   | **✅** | **HPO + Walk-forward + Tracker + Registry + Distributed + 集成测试** |
+| M4     | 生产就绪：模拟盘 7×24 无故障     | ⏳     | Phase 3 未启动（推理/交易所/风控/OMS/监控）                                    |
+| M5     | AI 高级功能               | ⏳     | Phase 4 未启动（LLM/集成/可解释性）                                         |
 
 ### MVP 已覆盖能力
 
@@ -148,7 +148,7 @@ obs, reward, terminated, truncated, info = env.step([0.0])
 | ------------ | -------------------------------------- | --------------- |
 | **回测性能**     | 单机并行回测吞吐                               | > 1M events/sec |
 | **撮合延迟**     | L1 价格-时间优先撮合                           | < 1μs (P99)     |
-| **多资产撮合**    | L3 多资产交叉撮合 / Batch Auction / Dark Pool | ✅ 已实现          |
+| **多资产撮合**    | L3 多资产交叉撮合 / Batch Auction / Dark Pool | ✅ 已实现           |
 | **调度精度**     | 模拟时钟调度                                 | < 200ns         |
 | **RL 训练吞吐**  | 单进程 VecEnv(8)                          | > 10k steps/sec |
 | **分布式扩展**    | Ray 8 worker 训练                        | 加速比 > 5x        |
@@ -157,8 +157,8 @@ obs, reward, terminated, truncated, info = env.step([0.0])
 | **OMS 状态更新** | 订单状态机切换                                | < 100μs         |
 | **OMS 恢复**   | 崩溃后从 snapshot 恢复未完成订单                  | 启动 < 1s         |
 | **PnL 记账**   | FIFO / LIFO / 加权平均三模式                  | 实时净值            |
-| **冲击建模**     | Almgren-Chriss / 平方根 / Kyle's lambda   | ✅ 学术级          |
-| **测试覆盖**     | **1246 单元测试** + 15 集成测试                  | 100% 通过          |
+| **冲击建模**     | Almgren-Chriss / 平方根 / Kyle's lambda   | ✅ 学术级           |
+| **测试覆盖**     | **1246 单元测试** + 15 集成测试                | 100% 通过         |
 | **变异测试**     | cargo-mutants 全 workspace              | 持续追踪            |
 | **模糊测试**     | cargo-fuzz 夜间 4 target × 30 min        | 自动崩溃归档          |
 | **二进制体积**    | 仅回测 feature                            | < 5MB           |
@@ -308,9 +308,9 @@ axon/
 
 ### 环境要求
 
-- **Rust** ≥ 1.75.0（推荐 [rustup](https://rustup.rs) 安装）
+- **Rust** ≥ 1.96.0（推荐 [rustup](https://rustup.rs) 安装）
 - **Git** 任意版本
-- **（可选）Python** ≥ 3.10 + PyO3 工具链（启用 python feature 时需要）
+- **（可选）Python** ≥ 3.12 + PyO3 工具链（启用 python feature 时需要）
 
 ### 编译与测试
 
@@ -372,28 +372,28 @@ python examples/walk_forward_basic.py
 
 ### 已实现 / 计划中
 
-| Crate | 状态 | 阶段 | 已实现模块 / 内容 |
-| --- | --- | --- | --- |
-| [`axon-core`](./crates/axon-core/) | 🟢 MVP | Phase 1A | 11 大模块：`time` `types` `market` `order` `event` `queue` `portfolio` `scheduler` `impact` `latency` `fee` `volatility` |
-| [`axon-backtest`](./crates/axon-backtest/) | 🟢 MVP | Phase 1A | L1/L2/L3 撮合 + 冲击感知撮合 + 学术级冲击模型 |
-| [`axon-rl`](./crates/axon-rl/) | 🟢 MVP | Phase 1B | Gymnasium 兼容环境 + 离散/连续/混合动作 + VecEnv + 6 个示例 |
-| [`axon-hpo`](./crates/axon-hpo/) | 🟢 MVP | Phase 2 P0 | Optuna 集成 + NSGA-II + 4 种 sampler × 4 种 pruner + Pareto/HV |
-| [`axon-walk-forward`](./crates/axon-walk-forward/) | 🟢 MVP | Phase 2 P1 | Rolling/Expanding + Purge/Embargo + Deflated Sharpe |
-| [`axon-distributed`](./crates/axon-distributed/) | 🟢 MVP | Phase 2 P2 | Ray/RLLib + Actor 池 + Parameter Server + Checkpoint 容错 |
-| [`axon-tracker`](./crates/axon-tracker/) | 🟢 MVP | Phase 2 P3 | MLflow/WandB/Local/Memory 4 后端 + 指标缓冲 + 重试 |
-| [`axon-registry`](./crates/axon-registry/) | 🟢 MVP | Phase 2 P4 | SemVer + 阶段生命周期 + 自动归档 + 回滚 + SHA-256 |
-| [`axon-integration-tests`](./crates/axon-integration-tests/) | 🟢 MVP | Phase 2 P5 | 跨模块端到端 15 个集成测试 |
-| [`axon-cli`](./crates/axon-cli/) | 🟢 MVP | Phase 0 | `axon` 命令行入口 |
-| `axon-llm` | ⏳ Phase 3 | 待启动 | LLM 智能体（ReAct、Function Calling） |
-| `axon-explain` | ⏳ Phase 3 | 待启动 | SHAP 可解释性 + 特征归因报告 |
-| `axon-ensemble` | ⏳ Phase 3 | 待启动 | 模型集成（Voting/Stacking/动态权重） |
-| `axon-compliance` | ⏳ Phase 3 | 待启动 | 合规审计（不可篡改日志 + 监管报表） |
-| `axon-data` | ⏳ Phase 3 | 待启动 | 数据服务（Arrow/Parquet 存储） |
-| `axon-inference` | ⏳ Phase 4 | 待启动 | ONNX/Candle 推理、CPU 亲和性、批推理 |
-| `axon-exchange` | ⏳ Phase 4 | 待启动 | REST/WebSocket 交易所适配器 |
-| `axon-risk` | ⏳ Phase 4 | 待启动 | 风控引擎（预交易检查、熔断） |
-| `axon-oms` | ⏳ Phase 4 | 待启动 | 订单管理系统（状态机 + 崩溃恢复） |
-| `axon-monitor` | ⏳ Phase 4 | 待启动 | Prometheus 监控告警 |
+| Crate                                                        | 状态        | 阶段         | 已实现模块 / 内容                                                                                                           |
+| ------------------------------------------------------------ | --------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| [`axon-core`](./crates/axon-core/)                           | 🟢 MVP    | Phase 1A   | 11 大模块：`time` `types` `market` `order` `event` `queue` `portfolio` `scheduler` `impact` `latency` `fee` `volatility` |
+| [`axon-backtest`](./crates/axon-backtest/)                   | 🟢 MVP    | Phase 1A   | L1/L2/L3 撮合 + 冲击感知撮合 + 学术级冲击模型                                                                                       |
+| [`axon-rl`](./crates/axon-rl/)                               | 🟢 MVP    | Phase 1B   | Gymnasium 兼容环境 + 离散/连续/混合动作 + VecEnv + 6 个示例                                                                         |
+| [`axon-hpo`](./crates/axon-hpo/)                             | 🟢 MVP    | Phase 2 P0 | Optuna 集成 + NSGA-II + 4 种 sampler × 4 种 pruner + Pareto/HV                                                           |
+| [`axon-walk-forward`](./crates/axon-walk-forward/)           | 🟢 MVP    | Phase 2 P1 | Rolling/Expanding + Purge/Embargo + Deflated Sharpe                                                                  |
+| [`axon-distributed`](./crates/axon-distributed/)             | 🟢 MVP    | Phase 2 P2 | Ray/RLLib + Actor 池 + Parameter Server + Checkpoint 容错                                                               |
+| [`axon-tracker`](./crates/axon-tracker/)                     | 🟢 MVP    | Phase 2 P3 | MLflow/WandB/Local/Memory 4 后端 + 指标缓冲 + 重试                                                                           |
+| [`axon-registry`](./crates/axon-registry/)                   | 🟢 MVP    | Phase 2 P4 | SemVer + 阶段生命周期 + 自动归档 + 回滚 + SHA-256                                                                                |
+| [`axon-integration-tests`](./crates/axon-integration-tests/) | 🟢 MVP    | Phase 2 P5 | 跨模块端到端 15 个集成测试                                                                                                      |
+| [`axon-cli`](./crates/axon-cli/)                             | 🟢 MVP    | Phase 0    | `axon` 命令行入口                                                                                                         |
+| `axon-llm`                                                   | ⏳ Phase 3 | 待启动        | LLM 智能体（ReAct、Function Calling）                                                                                      |
+| `axon-explain`                                               | ⏳ Phase 3 | 待启动        | SHAP 可解释性 + 特征归因报告                                                                                                   |
+| `axon-ensemble`                                              | ⏳ Phase 3 | 待启动        | 模型集成（Voting/Stacking/动态权重）                                                                                           |
+| `axon-compliance`                                            | ⏳ Phase 3 | 待启动        | 合规审计（不可篡改日志 + 监管报表）                                                                                                  |
+| `axon-data`                                                  | ⏳ Phase 3 | 待启动        | 数据服务（Arrow/Parquet 存储）                                                                                               |
+| `axon-inference`                                             | ⏳ Phase 4 | 待启动        | ONNX/Candle 推理、CPU 亲和性、批推理                                                                                           |
+| `axon-exchange`                                              | ⏳ Phase 4 | 待启动        | REST/WebSocket 交易所适配器                                                                                                |
+| `axon-risk`                                                  | ⏳ Phase 4 | 待启动        | 风控引擎（预交易检查、熔断）                                                                                                       |
+| `axon-oms`                                                   | ⏳ Phase 4 | 待启动        | 订单管理系统（状态机 + 崩溃恢复）                                                                                                   |
+| `axon-monitor`                                               | ⏳ Phase 4 | 待启动        | Prometheus 监控告警                                                                                                      |
 
 ### Feature Flag 设计
 
@@ -414,45 +414,45 @@ axon-hpo = { path = "crates/axon-hpo", features = ["python"] }
 
 ## 🗺️ 路线图
 
-| 阶段 | 名称 | 周期 | 状态 | 关键里程碑 |
-| --- | --- | --- | --- | --- |
-| **Phase 0** | 架构与基础设施 | Q1 2026 | ✅ 完成 | 项目骨架、CI/CD、ADR 框架 |
-| **Phase 1A** | 核心回测引擎 | Q1-Q2 2026 | ✅ 完成 | L1/L2/L3 撮合、事件队列、核心类型、冲击/延迟/费用 |
-| **Phase 1B** | RL 环境 + Python 绑定 | Q2 2026 | ✅ 完成 | Gymnasium 环境、PyO3、VecEnv、6 个训练示例 |
-| **Phase 2 P0** | HPO | Q2 2026 | ✅ 完成 | Optuna 集成 + Pareto + 剪枝 |
-| **Phase 2 P1** | 滚动前向验证 | Q2 2026 | ✅ 完成 | TimeSeriesSplit + Purged + Embargo |
-| **Phase 2 P2** | 分布式训练 | Q2 2026 | ✅ 完成 | Ray + RLLib + Checkpoint |
-| **Phase 2 P3** | 实验追踪 | Q2 2026 | ✅ 完成 | MLflow / WandB / Local / Memory |
-| **Phase 2 P4** | 模型注册表 | Q2 2026 | ✅ 完成 | SemVer + 阶段管理 + 回滚 |
-| **Phase 2 P5** | 跨模块集成测试 | Q2 2026 | ✅ 完成 | 15 端到端集成测试 |
-| **🎯 M3 MVP** | **训练管线完整闭环** | **Q2 2026** | **✅ 已达成** | **从单次回测到 HPO + Walk-forward + Tracker + Registry 全链路** |
-| **Phase 3** | 生产部署 | Q3-Q4 2026 | ⏳ 待启动 | 推理引擎、交易所对接、风控、OMS、监控 |
-| **Phase 4** | AI 高级功能 | Q1 2027 | ⏳ 待启动 | LLM 智能体、集成、可解释性 |
+| 阶段             | 名称                | 周期          | 状态        | 关键里程碑                                                  |
+| -------------- | ----------------- | ----------- | --------- | ------------------------------------------------------ |
+| **Phase 0**    | 架构与基础设施           | Q1 2026     | ✅ 完成      | 项目骨架、CI/CD、ADR 框架                                      |
+| **Phase 1A**   | 核心回测引擎            | Q1-Q2 2026  | ✅ 完成      | L1/L2/L3 撮合、事件队列、核心类型、冲击/延迟/费用                         |
+| **Phase 1B**   | RL 环境 + Python 绑定 | Q2 2026     | ✅ 完成      | Gymnasium 环境、PyO3、VecEnv、6 个训练示例                       |
+| **Phase 2 P0** | HPO               | Q2 2026     | ✅ 完成      | Optuna 集成 + Pareto + 剪枝                                |
+| **Phase 2 P1** | 滚动前向验证            | Q2 2026     | ✅ 完成      | TimeSeriesSplit + Purged + Embargo                     |
+| **Phase 2 P2** | 分布式训练             | Q2 2026     | ✅ 完成      | Ray + RLLib + Checkpoint                               |
+| **Phase 2 P3** | 实验追踪              | Q2 2026     | ✅ 完成      | MLflow / WandB / Local / Memory                        |
+| **Phase 2 P4** | 模型注册表             | Q2 2026     | ✅ 完成      | SemVer + 阶段管理 + 回滚                                     |
+| **Phase 2 P5** | 跨模块集成测试           | Q2 2026     | ✅ 完成      | 15 端到端集成测试                                             |
+| **🎯 M3 MVP**  | **训练管线完整闭环**      | **Q2 2026** | **✅ 已达成** | **从单次回测到 HPO + Walk-forward + Tracker + Registry 全链路** |
+| **Phase 3**    | 生产部署              | Q3-Q4 2026  | ⏳ 待启动     | 推理引擎、交易所对接、风控、OMS、监控                                   |
+| **Phase 4**    | AI 高级功能           | Q1 2027     | ⏳ 待启动     | LLM 智能体、集成、可解释性                                        |
 
 详细计划与依赖关系：[`axon-design/PLAN.md`](./axon-design/PLAN.md)
 
 ### 性能目标
 
-| 指标 | 目标 | 测量方法 | 当前状态 |
-| --- | --- | --- | --- |
-| 回测吞吐 | > 1M events/sec | 标准基准测试（Criterion.rs） | ✅ 已有基准，待持续追踪 |
-| 撮合延迟 | < 1μs（P99） | 模拟环境单线程测量 | ✅ 线性冲击下单笔撮合 ~370µs |
-| RL 训练吞吐 | > 10k steps/sec | 单进程 Gymnasium + Stable-Baselines3 | ✅ 8 env VecEnv 可达 |
-| 内存占用 | < 1GB / 10yr daily | Parquet 数据集回放 | ⏳ 待测量 |
-| 增量编译 | < 2 min | `cargo build` 冷启动 | ✅ workspace 增量 < 1 min |
-| 测试覆盖率 | > 90%（P0 模块） | `cargo-tarpaulin` | ✅ 1200+ 测试全绿 |
-| 集成测试 | 跨模块端到端 | axon-integration-tests | ✅ 15 测试全绿 |
+| 指标      | 目标                 | 测量方法                              | 当前状态                   |
+| ------- | ------------------ | --------------------------------- | ---------------------- |
+| 回测吞吐    | > 1M events/sec    | 标准基准测试（Criterion.rs）              | ✅ 已有基准，待持续追踪           |
+| 撮合延迟    | < 1μs（P99）         | 模拟环境单线程测量                         | ✅ 线性冲击下单笔撮合 \~370µs    |
+| RL 训练吞吐 | > 10k steps/sec    | 单进程 Gymnasium + Stable-Baselines3 | ✅ 8 env VecEnv 可达      |
+| 内存占用    | < 1GB / 10yr daily | Parquet 数据集回放                     | ⏳ 待测量                  |
+| 增量编译    | < 2 min            | `cargo build` 冷启动                 | ✅ workspace 增量 < 1 min |
+| 测试覆盖率   | > 90%（P0 模块）       | `cargo-tarpaulin`                 | ✅ 1200+ 测试全绿           |
+| 集成测试    | 跨模块端到端             | axon-integration-tests            | ✅ 15 测试全绿              |
 
 ***
 
 ## 👥 目标用户
 
-| 画像 | 痛点 | AXON 提供的价值 |
-| --- | --- | --- |
-| 🧑‍🔬 **量化研究员** | Backtrader/Zipline 性能不足，RL 环境需自研 | 10-100x 回测加速，内置 Gymnasium 环境 + HPO + Walk-forward 一站式 |
-| 🧑‍💻 **独立算法交易员** | 自研系统维护成本高，交易所对接繁琐 | 完整训练管线（追踪/注册/回滚）开箱即用 |
-| 🤖 **AI 研究员** | FinRL 不够灵活，难以自定义奖励/观测 | 高度可扩展 RL 环境 + 多目标 NSGA-II + Pareto 前沿 |
-| 🏢 **机构量化团队** | 自研系统封闭，新人培训成本高 | 标准化、可审计、模块化、Apache-2.0、1200+ 测试保驾 |
+| 画像                | 痛点                               | AXON 提供的价值                                            |
+| ----------------- | -------------------------------- | ----------------------------------------------------- |
+| 🧑‍🔬 **量化研究员**   | Backtrader/Zipline 性能不足，RL 环境需自研 | 10-100x 回测加速，内置 Gymnasium 环境 + HPO + Walk-forward 一站式 |
+| 🧑‍💻 **独立算法交易员** | 自研系统维护成本高，交易所对接繁琐                | 完整训练管线（追踪/注册/回滚）开箱即用                                  |
+| 🤖 **AI 研究员**     | FinRL 不够灵活，难以自定义奖励/观测            | 高度可扩展 RL 环境 + 多目标 NSGA-II + Pareto 前沿                 |
+| 🏢 **机构量化团队**     | 自研系统封闭，新人培训成本高                   | 标准化、可审计、模块化、Apache-2.0、1200+ 测试保驾                     |
 
 ***
 

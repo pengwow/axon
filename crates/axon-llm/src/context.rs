@@ -52,10 +52,7 @@ impl ContextManager {
     /// 压缩最旧可压缩的消息（保留 system 消息在首位）
     fn compress_oldest_message(&mut self) {
         // 找到第一个非 system 消息进行压缩
-        let target = self
-            .messages
-            .iter()
-            .position(|m| m.role != Role::System);
+        let target = self.messages.iter().position(|m| m.role != Role::System);
 
         let idx = match target {
             Some(i) if i > 0 => i,

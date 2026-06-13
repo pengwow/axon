@@ -72,10 +72,7 @@ impl LocalTracker {
     }
 
     fn append_metrics(state: &LocalState) -> Result<(), TrackerError> {
-        let path = state
-            .base_dir
-            .join(&state.run_id.0)
-            .join("metrics.jsonl");
+        let path = state.base_dir.join(&state.run_id.0).join("metrics.jsonl");
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

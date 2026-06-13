@@ -15,14 +15,22 @@ struct LinearModel {
 
 impl LinearModel {
     fn new(coefs: Vec<f64>, bias: f64) -> Self {
-        Self { coefficients: coefs, bias }
+        Self {
+            coefficients: coefs,
+            bias,
+        }
     }
 }
 
 impl ModelPredictor for LinearModel {
     fn predict(&self, features: &[f64]) -> Vec<f64> {
         let value: f64 = self.bias
-            + self.coefficients.iter().zip(features).map(|(c, x)| c * x).sum::<f64>();
+            + self
+                .coefficients
+                .iter()
+                .zip(features)
+                .map(|(c, x)| c * x)
+                .sum::<f64>();
         vec![value]
     }
 }
@@ -79,9 +87,9 @@ fn test_kernel_shap_local_accuracy() {
     assert_eq!(shap.len(), 3);
 
     // 局部精度：sum(phi) ≈ f(x) - E[f(X)]
-    let mean_bg: Vec<f64> = (0..3).map(|i| {
-        background.iter().map(|r| r[i]).sum::<f64>() / background.len() as f64
-    }).collect();
+    let mean_bg: Vec<f64> = (0..3)
+        .map(|i| background.iter().map(|r| r[i]).sum::<f64>() / background.len() as f64)
+        .collect();
     let base_pred = 1.0 + 0.5 * mean_bg[0] + (-0.3) * mean_bg[1] + 0.1 * mean_bg[2];
     let pred = 1.0 + 0.5 * 10.0 + (-0.3) * 20.0 + 0.1 * 30.0;
     let expected_sum = pred - base_pred;
@@ -91,7 +99,8 @@ fn test_kernel_shap_local_accuracy() {
     assert!(
         (actual_sum - expected_sum).abs() < 1.0,
         "SHAP 局部精度不足: actual={}, expected={}",
-        actual_sum, expected_sum
+        actual_sum,
+        expected_sum
     );
 }
 
@@ -104,9 +113,17 @@ fn test_kernel_shap_linear_recovers_sign() {
 
     // 特征值远大于背景均值 → 正 SHAP（系数为正）
     let shap = explainer.compute_shap(&[100.0, 100.0, 100.0]);
-    assert!(shap[0] > 0.0, "正系数 + 远高于均值 → 应有正 SHAP，实际={}", shap[0]);
+    assert!(
+        shap[0] > 0.0,
+        "正系数 + 远高于均值 → 应有正 SHAP，实际={}",
+        shap[0]
+    );
     // 系数为负
-    assert!(shap[1] < 0.0, "负系数 + 远高于均值 → 应有负 SHAP，实际={}", shap[1]);
+    assert!(
+        shap[1] < 0.0,
+        "负系数 + 远高于均值 → 应有负 SHAP，实际={}",
+        shap[1]
+    );
 }
 
 /// KernelSHAP 拒绝特征数量不匹配

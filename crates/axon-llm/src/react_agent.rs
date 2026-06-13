@@ -147,13 +147,19 @@ impl ReActAgent {
         self.memory.add(Message::user(query.to_string()));
 
         for iteration in 0..self.config.max_iterations {
-            debug!("ReAct 轮次 {}/{}", iteration + 1, self.config.max_iterations);
+            debug!(
+                "ReAct 轮次 {}/{}",
+                iteration + 1,
+                self.config.max_iterations
+            );
 
             // 准备工具定义
-            let tool_defs: Vec<ToolDefinition> = self.tools.values().map(|t| t.definition()).collect();
+            let tool_defs: Vec<ToolDefinition> =
+                self.tools.values().map(|t| t.definition()).collect();
 
             // 调用 LLM
-            let response = self.backend
+            let response = self
+                .backend
                 .complete_with_tools(ctx.messages(), &tool_defs)
                 .await
                 .map_err(|e| AgentError::LLMError(e.to_string()))?;
@@ -165,66 +171,65 @@ impl ReActAgent {
             let thought = response.content.clone().unwrap_or_default();
 
             // 检查是否有工具调用
-            if let Some(tool_calls) = &response.tool_calls {
-                if !tool_calls.is_empty() {
-                    let tool_call = &tool_calls[0];
-                    let tool_name = &tool_call.function_name;
+            if let Some(tool_calls) = &response.tool_calls
+                && !tool_calls.is_empty()
+            {
+                let tool_call = &tool_calls[0];
+                let tool_name = &tool_call.function_name;
 
-                    // 权限检查
-                    if !self.config.allowed_tools.is_empty()
-                        && !self.config.allowed_tools.contains(tool_name)
-                    {
-                        return Err(AgentError::PermissionDenied(format!(
-                            "{} 不在允许的工具列表中",
-                            tool_name
-                        )));
-                    }
-
-                    // 执行工具
-                    let observation = self
-                        .execute_tool(tool_name, &tool_call.arguments)
-                        .await?;
-
-                    let step = ReasoningStep {
-                        step: iteration,
-                        thought: thought.clone(),
-                        action: Some(tool_call.clone()),
-                        observation: Some(observation.clone()),
-                    };
-                    steps.push(step.clone());
-
-                    // 异步触发解释记录（fire-and-forget，不阻塞主循环）
-                    #[cfg(feature = "explain")]
-                    if let Some(recorder) = &self.recorder {
-                        let action_snapshot = snapshot_from_tool_call(&tool_call.arguments);
-                        let record = crate::explain::DecisionRecord {
-                            decision_id: uuid::Uuid::new_v4().to_string(),
-                            timestamp: std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0),
-                            mode: crate::explain::ExplainMode::WithReasoning,
-                            query: query.to_string(),
-                            reasoning_trace: vec![step],
-                            final_action: action_snapshot,
-                        };
-                        recorder.record_async(record);
-                    }
-
-                    // 追加到上下文
-                    ctx.add_message(Message {
-                        role: Role::Assistant,
-                        content: thought,
-                        tool_call_id: None,
-                        tool_calls: Some(tool_calls.clone()),
-                    });
-                    ctx.add_message(Message::tool_result(&tool_call.id, &observation));
-
-                    // 将观察结果加入记忆
-                    self.memory.add(Message::tool_result(&tool_call.id, &observation));
-
-                    continue;
+                // 权限检查
+                if !self.config.allowed_tools.is_empty()
+                    && !self.config.allowed_tools.contains(tool_name)
+                {
+                    return Err(AgentError::PermissionDenied(format!(
+                        "{} 不在允许的工具列表中",
+                        tool_name
+                    )));
                 }
+
+                // 执行工具
+                let observation = self.execute_tool(tool_name, &tool_call.arguments).await?;
+
+                let step = ReasoningStep {
+                    step: iteration,
+                    thought: thought.clone(),
+                    action: Some(tool_call.clone()),
+                    observation: Some(observation.clone()),
+                };
+                steps.push(step.clone());
+
+                // 异步触发解释记录（fire-and-forget，不阻塞主循环）
+                #[cfg(feature = "explain")]
+                if let Some(recorder) = &self.recorder {
+                    let action_snapshot = snapshot_from_tool_call(&tool_call.arguments);
+                    let record = crate::explain::DecisionRecord {
+                        decision_id: uuid::Uuid::new_v4().to_string(),
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                        mode: crate::explain::ExplainMode::WithReasoning,
+                        query: query.to_string(),
+                        reasoning_trace: vec![step],
+                        final_action: action_snapshot,
+                    };
+                    recorder.record_async(record);
+                }
+
+                // 追加到上下文
+                ctx.add_message(Message {
+                    role: Role::Assistant,
+                    content: thought,
+                    tool_call_id: None,
+                    tool_calls: Some(tool_calls.clone()),
+                });
+                ctx.add_message(Message::tool_result(&tool_call.id, &observation));
+
+                // 将观察结果加入记忆
+                self.memory
+                    .add(Message::tool_result(&tool_call.id, &observation));
+
+                continue;
             }
 
             // 无工具调用 → 最终答案
@@ -236,7 +241,9 @@ impl ReActAgent {
             });
 
             // 将助手答案加入记忆
-            self.memory.add(Message::assistant(response.content.clone().unwrap_or_default()));
+            self.memory.add(Message::assistant(
+                response.content.clone().unwrap_or_default(),
+            ));
 
             return Ok(AgentResponse {
                 answer: response.content.unwrap_or_default(),
@@ -252,11 +259,7 @@ impl ReActAgent {
     }
 
     /// 执行工具
-    async fn execute_tool(
-        &self,
-        name: &str,
-        arguments: &str,
-    ) -> Result<String, AgentError> {
+    async fn execute_tool(&self, name: &str, arguments: &str) -> Result<String, AgentError> {
         let tool = self
             .tools
             .get(name)
@@ -324,9 +327,6 @@ fn snapshot_from_tool_call(arguments: &str) -> axon_explain::types::ActionSnapsh
         entry_price: v["entry_price"].as_f64().unwrap_or(0.0),
         stop_loss: v["stop_loss"].as_f64().unwrap_or(0.0),
         take_profit: v["take_profit"].as_f64().unwrap_or(0.0),
-        order_type: v["order_type"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string(),
+        order_type: v["order_type"].as_str().unwrap_or("unknown").to_string(),
     }
 }

@@ -7,7 +7,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axon_explain::types::{ActionSnapshot, AttentionWeights, CounterfactualExplanation, Explanation};
+use axon_explain::types::{
+    ActionSnapshot, AttentionWeights, CounterfactualExplanation, Explanation,
+};
 use axon_llm::explain::{ExplanationStore, QueryExplanationTool};
 use axon_llm::tools::{Tool, ToolError};
 
@@ -52,7 +54,9 @@ async fn test_tool_name_and_description() {
 #[tokio::test]
 async fn test_tool_query_existing_id_returns_json() {
     let (store, tool) = make_tool();
-    store.insert("d1".to_string(), sample_explanation("d1")).await;
+    store
+        .insert("d1".to_string(), sample_explanation("d1"))
+        .await;
 
     let args = r#"{"decision_id":"d1"}"#;
     let result = tool.execute(args).await;

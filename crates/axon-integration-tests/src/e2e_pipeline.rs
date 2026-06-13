@@ -16,12 +16,12 @@ use axon_hpo::config::{
 };
 use axon_registry::storage::LocalStorage;
 use axon_registry::{ModelMetadata, ModelRegistry, ModelStage, SemVer};
+use axon_tracker::ExperimentTracker;
 use axon_tracker::backends::MemoryTracker;
 use axon_tracker::types::{MetricValue, ParamValue};
-use axon_tracker::ExperimentTracker;
 use axon_walk_forward::config::WalkForwardConfig;
-use axon_walk_forward::metrics::{ISMetrics, OOSMetrics, FoldResult};
-use axon_walk_forward::{aggregate_folds, TimeSeriesSplitter, WindowType};
+use axon_walk_forward::metrics::{FoldResult, ISMetrics, OOSMetrics};
+use axon_walk_forward::{TimeSeriesSplitter, WindowType, aggregate_folds};
 
 use crate::fixtures::SyntheticReturns;
 
@@ -57,7 +57,8 @@ fn evaluate_trial_with_walkforward(
         .iter()
         .enumerate()
         .map(|(i, split)| {
-            let oos_metrics = returns.simulate_strategy_oos(split.test_start, split.test_end, params);
+            let oos_metrics =
+                returns.simulate_strategy_oos(split.test_start, split.test_end, params);
             // 加上 gamma 的影响
             let adjusted_sharpe = oos_metrics.sharpe_ratio - gamma_penalty;
             let adjusted_oos = OOSMetrics {
@@ -88,9 +89,8 @@ pub async fn test_end_to_end_training_pipeline() {
 
     // 初始化三个核心组件
     let tracker = MemoryTracker::new();
-    let storage = Arc::new(
-        LocalStorage::new(tmp.path().join("models")).expect("create local storage"),
-    );
+    let storage =
+        Arc::new(LocalStorage::new(tmp.path().join("models")).expect("create local storage"));
     let registry = ModelRegistry::new(storage);
 
     // 1. HPO 配置：6 个 trial 搜索 gamma
@@ -140,8 +140,7 @@ pub async fn test_end_to_end_training_pipeline() {
         let (aggregated, stability) = aggregate_folds(&folds);
 
         // 记录到 tracker
-        for step in 0..folds.len() {
-            let fold = &folds[step];
+        for (step, fold) in folds.iter().enumerate() {
             tracker
                 .log_metric("fold_oos_sharpe", fold.oos_metrics.sharpe_ratio, step)
                 .unwrap();
@@ -228,12 +227,7 @@ pub async fn test_end_to_end_training_pipeline() {
     // (d) tracker 中最佳 trial 的 mean_oos_sharpe 等于注册到 Production 的指标
     let best_recorded = &sharpe_history[best_trial_idx];
     let tracker_sharpe = scalar(best_recorded);
-    let registry_sharpe = prod
-        .metadata
-        .metrics
-        .get("oos_sharpe")
-        .copied()
-        .unwrap();
+    let registry_sharpe = prod.metadata.metrics.get("oos_sharpe").copied().unwrap();
     assert!(
         (tracker_sharpe - registry_sharpe).abs() < 1e-9,
         "tracker 和 registry 的 sharpe 应一致: tracker={tracker_sharpe}, registry={registry_sharpe}"
@@ -252,13 +246,12 @@ pub async fn test_end_to_end_training_pipeline() {
 pub async fn test_e2e_train_register_rollback() {
     let tmp = tempfile::tempdir().unwrap();
     let tracker = MemoryTracker::new();
-    let storage = Arc::new(
-        LocalStorage::new(tmp.path().join("models")).expect("create local storage"),
-    );
+    let storage =
+        Arc::new(LocalStorage::new(tmp.path().join("models")).expect("create local storage"));
     let registry = ModelRegistry::new(storage);
 
     // 训练 3 个版本，v1 表现稳定，v2 表现更好（被采用），v3 表现差（被回滚）
-    let versions_spec = vec![
+    let versions_spec = [
         ("v1", 1.5, 0.10), // 稳定
         ("v2", 2.2, 0.08), // 最佳，被采用
         ("v3", 0.8, 0.30), // 表现差，需回滚
@@ -271,19 +264,11 @@ pub async fn test_e2e_train_register_rollback() {
                 .log_metric("loss", 1.0 / (step + 1) as f64, i * 50 + step)
                 .unwrap();
             tracker
-                .log_metric(
-                    "val_sharpe",
-                    *sharpe * step as f64 / 50.0,
-                    i * 50 + step,
-                )
+                .log_metric("val_sharpe", *sharpe * step as f64 / 50.0, i * 50 + step)
                 .unwrap();
         }
-        tracker
-            .log_metric("final_sharpe", *sharpe, i)
-            .unwrap();
-        tracker
-            .log_metric("final_max_dd", *dd, i)
-            .unwrap();
+        tracker.log_metric("final_sharpe", *sharpe, i).unwrap();
+        tracker.log_metric("final_max_dd", *dd, i).unwrap();
 
         // Registry 注册
         let artifact = tmp.path().join(format!("{name}.bin"));
@@ -339,9 +324,8 @@ pub async fn test_e2e_train_register_rollback() {
 pub async fn test_window_type_with_tracker_reporting() {
     let tmp = tempfile::tempdir().unwrap();
     let tracker = MemoryTracker::new();
-    let storage = Arc::new(
-        LocalStorage::new(tmp.path().join("models")).expect("create local storage"),
-    );
+    let storage =
+        Arc::new(LocalStorage::new(tmp.path().join("models")).expect("create local storage"));
     let registry = ModelRegistry::new(storage);
 
     for (variant_idx, window_type) in [WindowType::Rolling, WindowType::Expanding]

@@ -1,15 +1,17 @@
 //! axon-data Criterion 基准测试
 //!
 //! 运行:`cargo bench -p axon-data --features csv-source --features parquet-source`
-//! 5 个 group: lru_cache / dataset_lazy / csv_parse / mock_generate / parquet_load
+//! 6 个 group: lru_cache / dataset_lazy / csv_parse / mock_generate / parquet_load / parquet_stream
 //!
 //! 关键约束(从项目 lessons learned 提取):
 //! - 用 black_box() 包装动态值,避免常量折叠
 //! - 控制 batch ≤ 100,避免 OOM
 //! - 每个 group 独立 criterion_group
 
-use std::io::Write;
 use std::num::NonZeroUsize;
+
+#[cfg(feature = "csv-source")]
+use std::io::Write;
 
 #[cfg(feature = "parquet-source")]
 use arrow::array::{Float64Array, Int64Array, StringArray};
@@ -24,24 +26,21 @@ use std::fs::File;
 #[cfg(feature = "parquet-source")]
 use std::sync::Arc;
 
-use axon_data::sources::{CsvSource, MockSource};
+#[cfg(feature = "csv-source")]
+use axon_data::sources::CsvSource;
+use axon_data::sources::MockSource;
 use axon_data::types::{DataRequest, Frequency};
-use axon_data::{DataSource, Dataset, DataService};
+use axon_data::{DataService, DataSource, Dataset};
 use chrono::Utc;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+// tempfile::NamedTempFile 仅在 csv-source / parquet-source 下的 bench 中使用
+#[cfg(any(feature = "csv-source", feature = "parquet-source"))]
 use tempfile::NamedTempFile;
 
 /// 准备 N 个不同 symbol 的预热请求
 fn warmup_requests(n: usize) -> Vec<DataRequest> {
     (0..n)
-        .map(|i| {
-            DataRequest::new(
-                format!("SYM{i}"),
-                Utc::now(),
-                Utc::now(),
-                Frequency::Tick,
-            )
-        })
+        .map(|i| DataRequest::new(format!("SYM{i}"), Utc::now(), Utc::now(), Frequency::Tick))
         .collect()
 }
 
@@ -52,9 +51,7 @@ fn bench_lru_cache(c: &mut Criterion) {
     for &cap in &[16usize, 64, 256] {
         let svc = DataService::new()
             .with_cache_capacity(NonZeroUsize::new(cap).unwrap())
-            .register_source(Box::new(MockSource::with_tick_series(
-                "m", 1, 1, |_| 1.0,
-            )));
+            .register_source(Box::new(MockSource::with_tick_series("m", 1, 1, |_| 1.0)));
         let reqs = warmup_requests(cap * 2); // 触发淘汰
         // 预热(初始化缓存)
         rt.block_on(async {
@@ -75,6 +72,8 @@ fn bench_lru_cache(c: &mut Criterion) {
 
 /// group 2: Dataset lazy 方法(filter/take/skip/by_time_range)在不同规模下耗时
 fn bench_dataset_lazy(c: &mut Criterion) {
+    use arrow::array::{Array, Float64Array};
+    use arrow::record_batch::RecordBatch;
     use axon_core::market::{Side, Tick};
     use axon_core::time::Timestamp;
     use axon_core::types::{Price, Quantity};
@@ -93,11 +92,27 @@ fn bench_dataset_lazy(c: &mut Criterion) {
             })
             .collect();
         let req = DataRequest::new("BENCH", Utc::now(), Utc::now(), Frequency::Tick);
-        let ds = Dataset::new(ticks, vec![], "bench".into(), req);
+        // PR5:走 from_ticks 桥接入口
+        let ds = Dataset::from_ticks(ticks, "bench".into(), req).expect("from_ticks");
 
         group.bench_with_input(BenchmarkId::new("filter", n_rows), &n_rows, |b, _| {
             b.iter(|| {
-                let r = black_box(&ds).filter(|t| t.price.as_f64() > 150.0);
+                // PR5:列式 filter(走 `arrow::compute::kernels::cmp::gt` + scalar)
+                let r = black_box(&ds)
+                    .filter(|batch: &RecordBatch| -> std::sync::Arc<dyn Array> {
+                        let px = batch
+                            .column(1)
+                            .as_any()
+                            .downcast_ref::<Float64Array>()
+                            .expect("col 1 Float64Array");
+                        let mask = arrow::compute::kernels::cmp::gt(
+                            px,
+                            &Float64Array::new_scalar(150.0_f64),
+                        )
+                        .expect("gt");
+                        std::sync::Arc::new(mask) as std::sync::Arc<dyn Array>
+                    })
+                    .expect("filter");
                 black_box(r.len());
             });
         });
@@ -120,7 +135,9 @@ fn bench_dataset_lazy(c: &mut Criterion) {
                 b.iter(|| {
                     let start = Timestamp::from_nanos(10_000_000_000);
                     let end = Timestamp::from_nanos(20_000_000_000);
-                    let r = black_box(&ds).by_time_range(start, end);
+                    let r = black_box(&ds)
+                        .by_time_range(start, end)
+                        .expect("by_time_range");
                     black_box(r.len());
                 });
             },
@@ -129,13 +146,46 @@ fn bench_dataset_lazy(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(feature = "parquet-source"))]
+#[cfg(not(feature = "csv-source"))]
+criterion_group!(
+    benches,
+    bench_lru_cache,
+    bench_dataset_lazy,
+    bench_mock_generate
+);
+
+#[cfg(feature = "csv-source")]
+#[cfg(not(feature = "parquet-source"))]
+criterion_group!(
+    benches,
+    bench_lru_cache,
+    bench_dataset_lazy,
+    bench_csv_parse,
+    bench_mock_generate
+);
+
+#[cfg(feature = "parquet-source")]
+#[cfg(not(feature = "csv-source"))]
+criterion_group!(
+    benches,
+    bench_lru_cache,
+    bench_dataset_lazy,
+    bench_mock_generate,
+    bench_parquet_load,
+    bench_parquet_stream
+);
+
+#[cfg(feature = "csv-source")]
+#[cfg(feature = "parquet-source")]
 criterion_group!(
     benches,
     bench_lru_cache,
     bench_dataset_lazy,
     bench_csv_parse,
     bench_mock_generate,
-    bench_parquet_load
+    bench_parquet_load,
+    bench_parquet_stream
 );
 criterion_main!(benches);
 
@@ -147,12 +197,9 @@ fn bench_mock_generate(c: &mut Criterion) {
     for &n in &[1_000usize, 10_000, 100_000] {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter(|| {
-                let m = MockSource::with_tick_series(
-                    "m",
-                    black_box(n),
-                    1_000_000,
-                    |i| 100.0 + i as f64,
-                );
+                let m = MockSource::with_tick_series("m", black_box(n), 1_000_000, |i| {
+                    100.0 + i as f64
+                });
                 // 通过 query() API 拿到行数(bench binary 看不到 pub(crate) 字段)
                 let ds = rt.block_on(m.query(&req)).unwrap();
                 black_box(ds.len());
@@ -163,6 +210,7 @@ fn bench_mock_generate(c: &mut Criterion) {
 }
 
 /// 写一个 N 行的 CSV(纳秒时间戳,f64 价,1.0 量,buy)
+#[cfg(feature = "csv-source")]
 fn make_temp_csv(n_rows: usize) -> NamedTempFile {
     let mut f = NamedTempFile::new().unwrap();
     writeln!(f, "timestamp,price,quantity,side").unwrap();
@@ -173,7 +221,8 @@ fn make_temp_csv(n_rows: usize) -> NamedTempFile {
     f
 }
 
-/// group 3: CsvSource 解析吞吐
+/// group 3: CsvSource 解析吞吐(需 csv-source feature)
+#[cfg(feature = "csv-source")]
 fn bench_csv_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("csv_parse");
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -217,7 +266,13 @@ fn bench_parquet_load(c: &mut Criterion) {
             let prices: Float64Array = (0..n_rows).map(|i| 100.0 + (i % 100) as f64).collect();
             let qtys: Float64Array = (0..n_rows).map(|_| 1.0_f64).collect();
             let sides_vec: Vec<String> = (0..n_rows)
-                .map(|i| if i % 2 == 0 { "buy".to_string() } else { "sell".to_string() })
+                .map(|i| {
+                    if i % 2 == 0 {
+                        "buy".to_string()
+                    } else {
+                        "sell".to_string()
+                    }
+                })
                 .collect();
             let sides = StringArray::from(sides_vec);
             let batch = RecordBatch::try_new(
@@ -246,6 +301,100 @@ fn bench_parquet_load(c: &mut Criterion) {
                 black_box(ds.len());
             });
         });
+    }
+    group.finish();
+}
+
+/// group 6: ParquetSource::stream vs query(真流式 vs 伪流式,PR4)
+///
+/// 对比 `query()` 全量 + `take(10)`(伪流式)vs `stream()` + `take(10)`(真流式)
+/// 预期:大文件下 `stream_take_10` 显著快于 `query_take_10`,因为不用加载全文件
+#[cfg(feature = "parquet-source")]
+fn bench_parquet_stream(c: &mut Criterion) {
+    use axon_data::sources::ParquetSource;
+    // 使用全限定 `futures::StreamExt::for_each` 调用,避免未使用的 import 警告
+
+    let mut group = c.benchmark_group("parquet_stream");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    for &n_rows in &[10_000usize, 100_000] {
+        // 复用 parquet_load 同样的 Arrow 写盘逻辑
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        {
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("timestamp", DataType::Int64, false),
+                Field::new("price", DataType::Float64, false),
+                Field::new("quantity", DataType::Float64, false),
+                Field::new("side", DataType::Utf8, false),
+            ]));
+            let ts: Int64Array = (0..n_rows as i64).collect();
+            let prices: Float64Array = (0..n_rows).map(|i| 100.0 + (i % 100) as f64).collect();
+            let qtys: Float64Array = (0..n_rows).map(|_| 1.0_f64).collect();
+            let sides_vec: Vec<String> = (0..n_rows)
+                .map(|i| {
+                    if i % 2 == 0 {
+                        "buy".to_string()
+                    } else {
+                        "sell".to_string()
+                    }
+                })
+                .collect();
+            let sides = StringArray::from(sides_vec);
+            let batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(ts),
+                    Arc::new(prices),
+                    Arc::new(qtys),
+                    Arc::new(sides),
+                ],
+            )
+            .unwrap();
+            let file = File::create(&path).unwrap();
+            let mut writer = ArrowWriter::try_new(file, schema, None).unwrap();
+            writer.write(&batch).unwrap();
+            writer.close().unwrap();
+        }
+        // 阻止 NamedTempFile 删除临时文件(必须 leak 到 bench 结束)
+        std::mem::forget(tmp);
+        let path_str = path.to_string_lossy().into_owned();
+        let req = DataRequest::new("BENCH", Utc::now(), Utc::now(), Frequency::Tick);
+
+        // bench A:query() 全量 + take(10) — 加载全部 100k,只取 10 行(伪流式)
+        group.bench_with_input(
+            BenchmarkId::new("query_take_10", n_rows),
+            &n_rows,
+            |b, _| {
+                b.iter(|| {
+                    let src = ParquetSource::new("bench", black_box(&path_str));
+                    let ds = rt.block_on(src.query(black_box(&req))).unwrap();
+                    black_box(ds.take(10).len());
+                });
+            },
+        );
+
+        // bench B:stream() + take(10) — 边读边取 10 行(真流式,应显著更快)
+        // PR5:stream yield RecordBatch,for_each 累加 num_rows
+        group.bench_with_input(
+            BenchmarkId::new("stream_take_10", n_rows),
+            &n_rows,
+            |b, _| {
+                b.iter(|| {
+                    let src = ParquetSource::new("bench", black_box(&path_str));
+                    let stream = rt.block_on(src.stream(black_box(&req))).unwrap();
+                    let n: usize = rt.block_on(async {
+                        let mut total_rows = 0usize;
+                        futures::StreamExt::for_each(stream, |batch_res| {
+                            total_rows += batch_res.map(|b| b.num_rows()).unwrap_or(0);
+                            async {}
+                        })
+                        .await;
+                        total_rows
+                    });
+                    black_box(n);
+                });
+            },
+        );
     }
     group.finish();
 }

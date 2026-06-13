@@ -113,12 +113,12 @@ mod tests {
     #[test]
     fn test_symbol_with_special_chars() {
         let cases = [
-            "BTC-USDT",       // 横线分隔
-            "AAPL",           // 纯字母
-            "600519.SH",      // A 股风格
-            "BRK.B",          // 含点
-            "ESZ5",           // 期货合约
-            "中文-品种",       // 中文（newtype 包装不限制）
+            "BTC-USDT",  // 横线分隔
+            "AAPL",      // 纯字母
+            "600519.SH", // A 股风格
+            "BRK.B",     // 含点
+            "ESZ5",      // 期货合约
+            "中文-品种", // 中文（newtype 包装不限制）
         ];
         for c in cases {
             let s = Symbol::from(c);

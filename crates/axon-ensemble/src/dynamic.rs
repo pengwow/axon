@@ -24,11 +24,7 @@ pub struct DynamicWeightedEnsemble {
 
 impl DynamicWeightedEnsemble {
     /// 构造动态加权集成
-    pub fn new(
-        models: Vec<Box<dyn Policy>>,
-        decay_factor: f64,
-        volatility_penalty: f64,
-    ) -> Self {
+    pub fn new(models: Vec<Box<dyn Policy>>, decay_factor: f64, volatility_penalty: f64) -> Self {
         Self {
             models,
             performance_history: Vec::new(),
@@ -54,8 +50,7 @@ impl DynamicWeightedEnsemble {
         for perf in &self.performance_history {
             if let Some(idx) = self.models.iter().position(|m| m.name() == perf.model_name) {
                 // 累加 sharpe，惩罚回撤
-                let score = perf.sharpe_ratio
-                    - perf.max_drawdown.abs() * self.volatility_penalty;
+                let score = perf.sharpe_ratio - perf.max_drawdown.abs() * self.volatility_penalty;
                 if score > 0.0 {
                     scores[idx] += score;
                 }
@@ -160,8 +155,6 @@ impl Ensemble for DynamicWeightedEnsemble {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_compute_weights_uniform_when_empty_history() {
         // 静态测试：history 为空时使用均匀权重

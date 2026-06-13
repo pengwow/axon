@@ -20,7 +20,11 @@ pub struct SemVer {
 impl SemVer {
     /// 创建新版本
     pub fn new(major: u32, minor: u32, patch: u32) -> Self {
-        Self { major, minor, patch }
+        Self {
+            major,
+            minor,
+            patch,
+        }
     }
 
     /// 递增补丁版本
@@ -56,7 +60,11 @@ impl SemVer {
         let patch = parts[2]
             .parse()
             .map_err(|_| crate::error::RegistryError::InvalidVersion(s.to_string()))?;
-        Ok(Self { major, minor, patch })
+        Ok(Self {
+            major,
+            minor,
+            patch,
+        })
     }
 }
 

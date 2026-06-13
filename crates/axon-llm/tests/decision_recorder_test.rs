@@ -11,8 +11,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use axon_explain::error::ExplainabilityError;
 use axon_explain::traits::Explainer;
-use axon_explain::types::{ActionSnapshot, AttentionWeights, CounterfactualExplanation, Explanation};
-use axon_llm::explain::{DecisionRecord, DecisionRecorder, ExplainerBridge, ExplanationStore, ExplainMode};
+use axon_explain::types::{
+    ActionSnapshot, AttentionWeights, CounterfactualExplanation, Explanation,
+};
+use axon_llm::explain::{
+    DecisionRecord, DecisionRecorder, ExplainMode, ExplainerBridge, ExplanationStore,
+};
 
 struct SlowExplainer {
     delay: Duration,
@@ -30,7 +34,10 @@ impl Explainer for SlowExplainer {
             std::thread::sleep(self.delay);
         }
         if self.fail {
-            return Err(ExplainabilityError::FeatureMismatch { expected: 1, actual: 2 });
+            return Err(ExplainabilityError::FeatureMismatch {
+                expected: 1,
+                actual: 2,
+            });
         }
         Ok(Explanation {
             id: "slow".to_string(),
@@ -53,10 +60,7 @@ impl Explainer for SlowExplainer {
     ) -> Result<axon_explain::types::ActionAttribution, ExplainabilityError> {
         unimplemented!()
     }
-    fn get_attention_weights(
-        &self,
-        _o: &HashMap<String, f64>,
-    ) -> Option<Vec<AttentionWeights>> {
+    fn get_attention_weights(&self, _o: &HashMap<String, f64>) -> Option<Vec<AttentionWeights>> {
         None
     }
     fn generate_counterfactuals(

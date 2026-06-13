@@ -186,9 +186,9 @@ impl ImpactedMatchingEngine {
             if filled_qty > 0.0 {
                 // 用 taker 方向（取首笔 fill 的 taker_side，所有 fill 同向）
                 let side = result.fills[0].taker_side;
-                let impact = self
-                    .model
-                    .compute_impact(Quantity::from_f64(filled_qty), side, &pre_snapshot);
+                let impact =
+                    self.model
+                        .compute_impact(Quantity::from_f64(filled_qty), side, &pre_snapshot);
 
                 // 3b. 调整每笔成交价（叠加即时冲击）
                 if impact.instantaneous != 0.0 {
@@ -212,8 +212,7 @@ impl ImpactedMatchingEngine {
                 }
 
                 // 3d. 更新统计
-                self.stats.cumulative_instantaneous +=
-                    impact.instantaneous.abs() * filled_qty;
+                self.stats.cumulative_instantaneous += impact.instantaneous.abs() * filled_qty;
                 self.stats.cumulative_permanent += impact.permanent.abs() * filled_qty;
             }
         }
@@ -876,10 +875,8 @@ mod tests {
         const N_THREADS: usize = 20;
         const ORDERS_PER_THREAD: usize = 100;
 
-        let m: Box<dyn ImpactModel> = Box::new(LinearImpactModel::new(0.01));
-        let collected: Arc<std::sync::Mutex<Vec<ImpactStats>>> = Arc::new(
-            std::sync::Mutex::new(Vec::with_capacity(N_THREADS)),
-        );
+        let collected: Arc<std::sync::Mutex<Vec<ImpactStats>>> =
+            Arc::new(std::sync::Mutex::new(Vec::with_capacity(N_THREADS)));
 
         let mut handles = Vec::with_capacity(N_THREADS);
         for thread_id in 0..N_THREADS {
@@ -947,8 +944,10 @@ mod tests {
                     engine.submit(order);
                 }
                 // 至少有成交 ⇒ 永久冲击 > 0
-                assert!(engine.permanent_offset().abs() > 0.0,
-                    "thread {thread_id}: coeff={coeff} 下应有累积永久冲击");
+                assert!(
+                    engine.permanent_offset().abs() > 0.0,
+                    "thread {thread_id}: coeff={coeff} 下应有累积永久冲击"
+                );
             }));
         }
         for h in handles {

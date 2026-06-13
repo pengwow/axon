@@ -53,18 +53,17 @@ impl ExplainerBridge {
         let inner = Arc::clone(&self.inner);
 
         // 在 blocking thread pool 跑同步 explain
-        let explain_result = tokio::task::spawn_blocking(move || {
-            inner.explain(&observation, &action)
-        })
-        .await
-        .map_err(|join_err| {
-            // 任务被取消或 panic。语义上不是"模型未加载",但 axon-explain
-            // 当前没有更合适的变体,复用 ModelNotLoaded 并用消息区分。
-            ExplainabilityError::ModelNotLoaded(format!(
-                "explainer task join failed (panic or cancel): {}",
-                join_err
-            ))
-        })?;
+        let explain_result =
+            tokio::task::spawn_blocking(move || inner.explain(&observation, &action))
+                .await
+                .map_err(|join_err| {
+                    // 任务被取消或 panic。语义上不是"模型未加载",但 axon-explain
+                    // 当前没有更合适的变体,复用 ModelNotLoaded 并用消息区分。
+                    ExplainabilityError::ModelNotLoaded(format!(
+                        "explainer task join failed (panic or cancel): {}",
+                        join_err
+                    ))
+                })?;
 
         match explain_result {
             Ok(explanation) => {

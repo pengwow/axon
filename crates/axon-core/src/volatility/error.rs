@@ -7,7 +7,12 @@ use thiserror::Error;
 pub enum VolatilityError {
     /// 数据不足
     #[error("数据不足：需要 {required} 个样本，实际 {available} 个")]
-    InsufficientData { required: usize, available: usize },
+    InsufficientData {
+        /// 所需最少样本数
+        required: usize,
+        /// 实际可用样本数
+        available: usize,
+    },
 
     /// 窗口大小为 0
     #[error("窗口大小必须 > 0")]

@@ -2,8 +2,8 @@
 //!
 //! PromptTemplate 提供结构化的提示模板，支持变量替换和 few-shot 示例。
 
-use std::collections::HashMap;
 use axon_llm::prompt::PromptTemplate;
+use std::collections::HashMap;
 
 // ─── 模板创建 ──────────────────────────────────────────────
 
@@ -49,7 +49,11 @@ fn test_template_render_keeps_unknown_variables() {
     // 不提供 unknown
 
     let user = t.render_user(&vars);
-    assert!(user.contains("{unknown}"), "未提供的变量应保留原文: {}", user);
+    assert!(
+        user.contains("{unknown}"),
+        "未提供的变量应保留原文: {}",
+        user
+    );
 }
 
 // ─── Few-shot 示例 ─────────────────────────────────────────

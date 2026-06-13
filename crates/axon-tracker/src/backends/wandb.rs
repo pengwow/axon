@@ -161,8 +161,8 @@ impl ExperimentTracker for WandbTracker {
     }
 
     fn log_artifact(&self, name: &str, path: &Path) -> Result<(), TrackerError> {
-        let file_bytes = std::fs::read(path)
-            .map_err(|e| TrackerError::Io(format!("{path:?}: {e}")))?;
+        let file_bytes =
+            std::fs::read(path).map_err(|e| TrackerError::Io(format!("{path:?}: {e}")))?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&file_bytes);
         self.log_to_wandb(
             "logArtifacts",

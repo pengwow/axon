@@ -3,8 +3,7 @@
 //! 验证统一管理多个模型 + 多样性度量
 
 use axon_ensemble::{
-    Action, ActionProbabilities, ActionType, EnsembleManager, HardVoteStrategy, Observation,
-    Policy,
+    Action, ActionProbabilities, ActionType, EnsembleManager, HardVoteStrategy, Observation, Policy,
 };
 struct FixedPolicy {
     name: String,
@@ -85,7 +84,11 @@ fn test_manager_diversity_zero_for_identical_models() {
     }));
     let obs = vec![Observation::default(), Observation::default()];
     let diversity = manager.compute_diversity(&obs);
-    assert!((diversity - 0.0).abs() < 1e-9, "相同模型多样性应为 0，实际 {}", diversity);
+    assert!(
+        (diversity - 0.0).abs() < 1e-9,
+        "相同模型多样性应为 0，实际 {}",
+        diversity
+    );
 }
 
 #[test]
@@ -101,7 +104,11 @@ fn test_manager_diversity_one_for_disagreeing_models() {
     }));
     let obs = vec![Observation::default()];
     let diversity = manager.compute_diversity(&obs);
-    assert!((diversity - 1.0).abs() < 1e-9, "完全分歧多样性应为 1.0，实际 {}", diversity);
+    assert!(
+        (diversity - 1.0).abs() < 1e-9,
+        "完全分歧多样性应为 1.0，实际 {}",
+        diversity
+    );
 }
 
 #[test]

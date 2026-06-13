@@ -25,9 +25,7 @@ impl PyLocalStorage {
     fn new(base_dir: &str) -> PyResult<Self> {
         let s = RustLocalStorage::new(std::path::PathBuf::from(base_dir))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
-        Ok(Self {
-            inner: Arc::new(s),
-        })
+        Ok(Self { inner: Arc::new(s) })
     }
 
     fn base_dir(&self) -> String {
@@ -122,11 +120,7 @@ impl PyModelRegistry {
         model_version_to_dict(py, &mv)
     }
 
-    fn get_production<'py>(
-        &self,
-        py: Python<'py>,
-        name: &str,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    fn get_production<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyDict>> {
         let registry = self.registry.clone();
         let name_owned = name.to_string();
 
@@ -143,14 +137,14 @@ impl PyModelRegistry {
     }
 
     fn __repr__(&self) -> String {
-        format!("ModelRegistry(models={})", self.registry.list_models().len())
+        format!(
+            "ModelRegistry(models={})",
+            self.registry.list_models().len()
+        )
     }
 }
 
-fn model_version_to_dict<'py>(
-    py: Python<'py>,
-    mv: &ModelVersion,
-) -> PyResult<Bound<'py, PyDict>> {
+fn model_version_to_dict<'py>(py: Python<'py>, mv: &ModelVersion) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("name", &mv.name)?;
     dict.set_item("version", mv.version.to_string())?;

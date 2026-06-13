@@ -79,8 +79,8 @@ impl SyntheticReturns {
         }
         let max_drawdown = -max_dd; // 负数
 
-        let win_rate = slice.iter().filter(|&&r| r > 0.0).count() as f64
-            / slice.len().max(1) as f64;
+        let win_rate =
+            slice.iter().filter(|&&r| r > 0.0).count() as f64 / slice.len().max(1) as f64;
 
         OOSMetrics {
             total_return,
@@ -139,10 +139,7 @@ pub fn make_trial(
 ///
 /// - `objectives`: 各目标值
 /// - `params`: 超参（key, value）
-pub fn make_pareto(
-    objectives: Vec<f64>,
-    params: Vec<(String, f64)>,
-) -> ParetoPoint {
+pub fn make_pareto(objectives: Vec<f64>, params: Vec<(String, f64)>) -> ParetoPoint {
     let mut param_map: HashMap<String, serde_json::Value> = HashMap::new();
     for (k, v) in params {
         param_map.insert(k, serde_json::json!(v));

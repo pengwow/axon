@@ -4,24 +4,39 @@
 //!      AttentionWeights / ActionSnapshot / CounterfactualExplanation / Explanation /
 //!      DecisionReport / FeatureSummary / RiskAttributionMetrics / RegimeChange
 
-use std::collections::HashMap;
-use chrono::{TimeZone, Utc};
 use axon_explain::types::{
-    ActionAttribution, ActionSnapshot, AttentionWeights, ContributionDirection, CounterfactualExplanation,
-    DecisionReport, Explanation, FeatureContribution, FeatureSummary, RegimeChange,
-    RiskAttributionMetrics,
+    ActionAttribution, ActionSnapshot, AttentionWeights, ContributionDirection,
+    CounterfactualExplanation, DecisionReport, Explanation, FeatureContribution, FeatureSummary,
+    RegimeChange, RiskAttributionMetrics,
 };
+use chrono::{TimeZone, Utc};
+use std::collections::HashMap;
 
 // ─── FeatureContribution ──────────────────────────────────────
 
 #[test]
 fn test_feature_contribution_direction_from_sign() {
-    assert_eq!(ContributionDirection::from_shap(0.5), ContributionDirection::Positive);
-    assert_eq!(ContributionDirection::from_shap(-0.3), ContributionDirection::Negative);
-    assert_eq!(ContributionDirection::from_shap(0.0), ContributionDirection::Neutral);
+    assert_eq!(
+        ContributionDirection::from_shap(0.5),
+        ContributionDirection::Positive
+    );
+    assert_eq!(
+        ContributionDirection::from_shap(-0.3),
+        ContributionDirection::Negative
+    );
+    assert_eq!(
+        ContributionDirection::from_shap(0.0),
+        ContributionDirection::Neutral
+    );
     // 接近零视为中性
-    assert_eq!(ContributionDirection::from_shap(0.0001), ContributionDirection::Neutral);
-    assert_eq!(ContributionDirection::from_shap(-0.0001), ContributionDirection::Neutral);
+    assert_eq!(
+        ContributionDirection::from_shap(0.0001),
+        ContributionDirection::Neutral
+    );
+    assert_eq!(
+        ContributionDirection::from_shap(-0.0001),
+        ContributionDirection::Neutral
+    );
 }
 
 /// 关键测试用例（来自设计文档）：SHAP 值符号应正确分类方向
@@ -74,11 +89,36 @@ fn test_action_snapshot_serde_round_trip() {
 #[test]
 fn test_action_attribution_splits_positive_and_negative() {
     let contribs = vec![
-        FeatureContribution { feature_name: "f1".into(), shap_value: 0.5, feature_value: 1.0, direction: ContributionDirection::Positive },
-        FeatureContribution { feature_name: "f2".into(), shap_value: -0.3, feature_value: 2.0, direction: ContributionDirection::Negative },
-        FeatureContribution { feature_name: "f3".into(), shap_value: 0.2, feature_value: 3.0, direction: ContributionDirection::Positive },
-        FeatureContribution { feature_name: "f4".into(), shap_value: -0.1, feature_value: 4.0, direction: ContributionDirection::Negative },
-        FeatureContribution { feature_name: "f5".into(), shap_value: 0.0, feature_value: 5.0, direction: ContributionDirection::Neutral },
+        FeatureContribution {
+            feature_name: "f1".into(),
+            shap_value: 0.5,
+            feature_value: 1.0,
+            direction: ContributionDirection::Positive,
+        },
+        FeatureContribution {
+            feature_name: "f2".into(),
+            shap_value: -0.3,
+            feature_value: 2.0,
+            direction: ContributionDirection::Negative,
+        },
+        FeatureContribution {
+            feature_name: "f3".into(),
+            shap_value: 0.2,
+            feature_value: 3.0,
+            direction: ContributionDirection::Positive,
+        },
+        FeatureContribution {
+            feature_name: "f4".into(),
+            shap_value: -0.1,
+            feature_value: 4.0,
+            direction: ContributionDirection::Negative,
+        },
+        FeatureContribution {
+            feature_name: "f5".into(),
+            shap_value: 0.0,
+            feature_value: 5.0,
+            direction: ContributionDirection::Neutral,
+        },
     ];
     let attr = ActionAttribution::from_contributions(
         "position_size".to_string(),
@@ -118,7 +158,11 @@ fn test_attention_weights_rows_sum_to_one() {
     let w = AttentionWeights {
         layer: 0,
         head: 0,
-        weights: vec![vec![0.3, 0.5, 0.2], vec![0.1, 0.6, 0.3], vec![0.4, 0.4, 0.2]],
+        weights: vec![
+            vec![0.3, 0.5, 0.2],
+            vec![0.1, 0.6, 0.3],
+            vec![0.4, 0.4, 0.2],
+        ],
         tokens: vec!["a".into(), "b".into(), "c".into()],
         timestamp: Utc::now(),
     };
@@ -134,11 +178,17 @@ fn test_attention_weights_rows_sum_to_one() {
 fn test_counterfactual_holds_narrative() {
     let cf = CounterfactualExplanation {
         original_action: ActionSnapshot {
-            position_size: 1.0, entry_price: 100.0, stop_loss: 95.0, take_profit: 110.0,
+            position_size: 1.0,
+            entry_price: 100.0,
+            stop_loss: 95.0,
+            take_profit: 110.0,
             order_type: "limit".into(),
         },
         modified_action: ActionSnapshot {
-            position_size: 0.5, entry_price: 100.0, stop_loss: 95.0, take_profit: 110.0,
+            position_size: 0.5,
+            entry_price: 100.0,
+            stop_loss: 95.0,
+            take_profit: 110.0,
             order_type: "limit".into(),
         },
         changed_features: vec!["rsi_14".into()],
@@ -163,7 +213,10 @@ fn test_explanation_contains_all_fields() {
         id: "exp_001".to_string(),
         observation_id: "obs_001".to_string(),
         action: ActionSnapshot {
-            position_size: 1.0, entry_price: 100.0, stop_loss: 95.0, take_profit: 110.0,
+            position_size: 1.0,
+            entry_price: 100.0,
+            stop_loss: 95.0,
+            take_profit: 110.0,
             order_type: "limit".into(),
         },
         feature_importance: feat_importance.clone(),
@@ -187,7 +240,10 @@ fn test_explanation_serde_round_trip() {
         id: "x".into(),
         observation_id: "y".into(),
         action: ActionSnapshot {
-            position_size: 1.0, entry_price: 1.0, stop_loss: 0.9, take_profit: 1.1,
+            position_size: 1.0,
+            entry_price: 1.0,
+            stop_loss: 0.9,
+            take_profit: 1.1,
             order_type: "limit".into(),
         },
         feature_importance: HashMap::new(),

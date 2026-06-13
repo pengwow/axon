@@ -434,9 +434,7 @@ fn test_async_concurrent_construction_drop() {
                 let factory = make_factory(10);
                 let mut envs = AsyncVecEnv::new(factory, 4).expect("new");
                 envs.reset_all().expect("reset_all");
-                let actions: Vec<Action> = (0..4)
-                    .map(|_| Action::continuous(vec![0.0]))
-                    .collect();
+                let actions: Vec<Action> = (0..4).map(|_| Action::continuous(vec![0.0])).collect();
                 for _ in 0..10 {
                     envs.step_batch(actions.clone()).expect("step_batch");
                 }
@@ -535,7 +533,9 @@ fn test_async_auto_reset_under_load() {
     let hold = Action::continuous(vec![0.0]);
     // 跑 2 个完整 episode（每 episode MAX_STEPS 步）
     for _ in 0..(MAX_STEPS * 2) {
-        let results = envs.step_batch(vec![hold.clone(); N_ENVS]).expect("step_batch");
+        let results = envs
+            .step_batch(vec![hold.clone(); N_ENVS])
+            .expect("step_batch");
         assert_eq!(results.len(), N_ENVS);
     }
 

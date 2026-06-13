@@ -55,16 +55,16 @@ impl PyImpactedMatchingEngine {
         let model: Box<dyn axon_core::impact::ImpactModel> = match model_type {
             "linear" => Box::new(axon_core::impact::LinearImpactModel::new(coefficient)),
             "power_law" => Box::new(axon_core::impact::PowerLawImpactModel::new(
-                coefficient, exponent,
+                coefficient,
+                exponent,
             )),
             _ => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "unknown model_type: {model_type}"
-                )))
+                )));
             }
         };
-        let mut engine = RustEngine::new(model)
-            .with_permanent_decay(permanent_decay);
+        let mut engine = RustEngine::new(model).with_permanent_decay(permanent_decay);
         // 重新调整 depth_levels 和 instantaneous_ratio（构造后再覆盖）
         // 注：构造 LinearImpactModel/PowerLawImpactModel 时已设置默认 depth=10、ratio=0.7
         // 用户传入的 depth/ratio 不影响已构造的模型，仅作为占位（由 Rust API 调用控制）
@@ -200,9 +200,7 @@ fn dict_to_order(dict: &Bound<'_, PyDict>) -> PyResult<Order> {
         "limit" => {
             let price: f64 = dict
                 .get_item("price")?
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyKeyError::new_err("limit order needs 'price'")
-                })?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("limit order needs 'price'"))?
                 .extract()?;
             OrderType::Limit {
                 price: Price::from_f64(price),
@@ -212,7 +210,7 @@ fn dict_to_order(dict: &Bound<'_, PyDict>) -> PyResult<Order> {
         other => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "unsupported order type: {other}"
-            )))
+            )));
         }
     };
 

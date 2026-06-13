@@ -41,7 +41,10 @@ pub fn fixtures_dir() -> PathBuf {
 
 /// 单条 fixture 路径(`<root>/<test>/<model>/<id>.json`)
 pub fn fixture_path(test: &str, model: &str, id: &str) -> PathBuf {
-    fixtures_dir().join(test).join(model).join(format!("{id}.json"))
+    fixtures_dir()
+        .join(test)
+        .join(model)
+        .join(format!("{id}.json"))
 }
 
 /// 是否具备执行条件:有 API key(fixture 仅是录制产物,无 key 时 skip)

@@ -409,16 +409,10 @@ mod tests {
             let book = Arc::clone(&ob);
             handles.push(thread::spawn(move || {
                 for _ in 0..PER_THREAD {
-                    let buy_impact = model.compute_impact(
-                        Quantity::from_f64(10.0),
-                        Side::Buy,
-                        &book,
-                    );
-                    let sell_impact = model.compute_impact(
-                        Quantity::from_f64(10.0),
-                        Side::Sell,
-                        &book,
-                    );
+                    let buy_impact =
+                        model.compute_impact(Quantity::from_f64(10.0), Side::Buy, &book);
+                    let sell_impact =
+                        model.compute_impact(Quantity::from_f64(10.0), Side::Sell, &book);
                     // 买冲击 > 0（因为买单吃卖单）
                     assert!(buy_impact.total() > 0.0);
                     // 卖冲击 > 0（因为卖单吃买单）

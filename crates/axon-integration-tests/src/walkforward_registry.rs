@@ -11,7 +11,7 @@ use axon_registry::storage::LocalStorage;
 use axon_registry::{ModelMetadata, ModelRegistry, ModelStage};
 use axon_walk_forward::config::WalkForwardConfig;
 use axon_walk_forward::metrics::{ISMetrics, OOSMetrics};
-use axon_walk_forward::{aggregate_folds, FoldResult, TimeSeriesSplitter, WindowType};
+use axon_walk_forward::{FoldResult, TimeSeriesSplitter, WindowType, aggregate_folds};
 
 use crate::fixtures::SyntheticReturns;
 
@@ -27,12 +27,27 @@ fn make_synthetic_artifact(dir: &std::path::Path, version: &str) -> std::path::P
 #[allow(dead_code)]
 fn fold_metrics_to_hashmap(fold: &FoldResult) -> std::collections::HashMap<String, f64> {
     let mut m = std::collections::HashMap::new();
-    m.insert("oos_sharpe_ratio".to_string(), fold.oos_metrics.sharpe_ratio);
-    m.insert("oos_total_return".to_string(), fold.oos_metrics.total_return);
-    m.insert("oos_max_drawdown".to_string(), fold.oos_metrics.max_drawdown);
+    m.insert(
+        "oos_sharpe_ratio".to_string(),
+        fold.oos_metrics.sharpe_ratio,
+    );
+    m.insert(
+        "oos_total_return".to_string(),
+        fold.oos_metrics.total_return,
+    );
+    m.insert(
+        "oos_max_drawdown".to_string(),
+        fold.oos_metrics.max_drawdown,
+    );
     m.insert("oos_win_rate".to_string(), fold.oos_metrics.win_rate);
-    m.insert("oos_profit_factor".to_string(), fold.oos_metrics.profit_factor);
-    m.insert("oos_calmar_ratio".to_string(), fold.oos_metrics.calmar_ratio);
+    m.insert(
+        "oos_profit_factor".to_string(),
+        fold.oos_metrics.profit_factor,
+    );
+    m.insert(
+        "oos_calmar_ratio".to_string(),
+        fold.oos_metrics.calmar_ratio,
+    );
     m.insert("overfit_ratio".to_string(), fold.overfit_ratio);
     m
 }
@@ -105,9 +120,8 @@ pub async fn test_walkforward_best_fold_registered() {
     assert!(best_fold.oos_metrics.sharpe_ratio > 2.0);
 
     // 创建 Registry
-    let storage = Arc::new(
-        LocalStorage::new(tmp.path().join("models")).expect("create local storage"),
-    );
+    let storage =
+        Arc::new(LocalStorage::new(tmp.path().join("models")).expect("create local storage"));
     let registry = ModelRegistry::new(storage);
 
     // 为每个 fold 注册一个版本，fold 2 提升为 Production
@@ -161,7 +175,10 @@ pub async fn test_walkforward_window_type_combination() {
 
     // 验证 Rolling 配置的合法性
     let rolling_cfg = WalkForwardConfig::rolling(500, 100, 100);
-    assert!(rolling_cfg.validate().is_ok(), "rolling config should be valid");
+    assert!(
+        rolling_cfg.validate().is_ok(),
+        "rolling config should be valid"
+    );
 
     let expanding_cfg = WalkForwardConfig::expanding(500, 100, 100);
     assert!(
@@ -173,9 +190,8 @@ pub async fn test_walkforward_window_type_combination() {
 /// 测试：多次迭代 Walk-forward + Registry 累积
 pub async fn test_walkforward_iterative_registration() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = Arc::new(
-        LocalStorage::new(tmp.path().join("models")).expect("create local storage"),
-    );
+    let storage =
+        Arc::new(LocalStorage::new(tmp.path().join("models")).expect("create local storage"));
     let registry = ModelRegistry::new(storage);
 
     let artifacts_dir = tmp.path().join("artifacts");

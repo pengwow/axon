@@ -48,8 +48,8 @@ impl StorageBackendTrait for LocalStorage {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| RegistryError::Io(e.to_string()))?;
         }
-        let metadata = std::fs::metadata(source)
-            .map_err(|e| RegistryError::StorageError(e.to_string()))?;
+        let metadata =
+            std::fs::metadata(source).map_err(|e| RegistryError::StorageError(e.to_string()))?;
         let size = metadata.len();
 
         // 异步复制文件

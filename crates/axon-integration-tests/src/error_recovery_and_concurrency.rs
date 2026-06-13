@@ -17,13 +17,13 @@ use axon_hpo::config::{
 use axon_hpo::trial::TrialState;
 use axon_registry::storage::LocalStorage;
 use axon_registry::{ModelMetadata, ModelRegistry, ModelStage, SemVer};
+use axon_tracker::ExperimentTracker;
 use axon_tracker::backends::MemoryTracker;
 use axon_tracker::types::{MetricValue, ParamValue};
-use axon_tracker::ExperimentTracker;
 use axon_walk_forward::config::WalkForwardConfig;
-use axon_walk_forward::metrics::{ISMetrics, OOSMetrics, FoldResult};
+use axon_walk_forward::metrics::{FoldResult, ISMetrics};
 use axon_walk_forward::purge::{detect_leakage, embargo_indices, purge_overlapping_labels};
-use axon_walk_forward::{aggregate_folds, TimeSeriesSplitter, WindowType};
+use axon_walk_forward::{TimeSeriesSplitter, WindowType, aggregate_folds};
 
 use crate::fixtures::SyntheticReturns;
 
@@ -58,7 +58,9 @@ pub async fn test_hpo_failure_does_not_pollute_registry() {
 
     for (id, value, state, should_register) in &trials {
         // Tracker 记录 trial 参数和状态
-        tracker.log_param("trial_id", &ParamValue::Int(*id as i64)).unwrap();
+        tracker
+            .log_param("trial_id", &ParamValue::Int(*id as i64))
+            .unwrap();
         tracker.log_param("lr", &ParamValue::Float(0.001)).unwrap();
         tracker
             .log_metric("objective", *value, *id as usize)
@@ -72,7 +74,11 @@ pub async fn test_hpo_failure_does_not_pollute_registry() {
         tracker
             .log_metric(
                 "trial_state_indicator",
-                if matches!(state, TrialState::Complete) { 1.0 } else { 0.0 },
+                if matches!(state, TrialState::Complete) {
+                    1.0
+                } else {
+                    0.0
+                },
                 *id as usize,
             )
             .unwrap();
@@ -128,7 +134,11 @@ pub async fn test_hpo_failure_does_not_pollute_registry() {
             _ => None,
         })
         .collect();
-    assert_eq!(failed_objectives.len(), 2, "应记录 2 个失败 trial 的 objective");
+    assert_eq!(
+        failed_objectives.len(),
+        2,
+        "应记录 2 个失败 trial 的 objective"
+    );
     assert!(failed_objectives.contains(&0.3), "trial 2 objective 应保留");
     assert!(failed_objectives.contains(&0.0), "trial 4 objective 应保留");
 
@@ -219,7 +229,7 @@ pub async fn test_concurrent_registry_registrations() {
 
     // 验证：所有版本号唯一
     let mut versions: Vec<SemVer> = all.iter().map(|mv| mv.version.clone()).collect();
-    versions.sort_by(|a, b| a.patch.cmp(&b.patch));
+    versions.sort_by_key(|a| a.patch);
     for w in versions.windows(2) {
         assert_ne!(w[0], w[1], "版本号重复: {}", w[0]);
     }
@@ -301,9 +311,24 @@ pub async fn test_tracker_registry_data_consistency() {
         .get("consistent_model", Some(&mv.version))
         .await
         .unwrap();
-    let reg_sharpe = registered.metadata.metrics.get("final_sharpe").copied().unwrap();
-    let reg_loss = registered.metadata.metrics.get("final_loss").copied().unwrap();
-    let reg_epochs = registered.metadata.metrics.get("n_epochs").copied().unwrap();
+    let reg_sharpe = registered
+        .metadata
+        .metrics
+        .get("final_sharpe")
+        .copied()
+        .unwrap();
+    let reg_loss = registered
+        .metadata
+        .metrics
+        .get("final_loss")
+        .copied()
+        .unwrap();
+    let reg_epochs = registered
+        .metadata
+        .metrics
+        .get("n_epochs")
+        .copied()
+        .unwrap();
 
     assert!((reg_sharpe - recorded_final_sharpe).abs() < 1e-9);
     assert!((reg_loss - recorded_final_loss).abs() < 1e-9);
@@ -555,7 +580,10 @@ pub async fn test_aggregate_oos_then_register() {
     metrics.insert("mean_oos_sharpe".to_string(), aggregated.mean_oos_sharpe);
     metrics.insert("mean_oos_return".to_string(), aggregated.mean_oos_return);
     metrics.insert("deflated_sharpe".to_string(), stability.deflated_sharpe);
-    metrics.insert("pct_profitable_folds".to_string(), aggregated.pct_profitable_folds);
+    metrics.insert(
+        "pct_profitable_folds".to_string(),
+        aggregated.pct_profitable_folds,
+    );
     let metadata = ModelMetadata {
         description: "Aggregated OOS metrics after walk-forward".to_string(),
         metrics: metrics.clone(),
@@ -575,7 +603,10 @@ pub async fn test_aggregate_oos_then_register() {
     assert_eq!(prod.stage, ModelStage::Production);
     for (k, v) in &metrics {
         let reg_v = prod.metadata.metrics.get(k).copied().unwrap();
-        assert!((reg_v - v).abs() < 1e-9, "metric {k}: tracker={v}, registry={reg_v}");
+        assert!(
+            (reg_v - v).abs() < 1e-9,
+            "metric {k}: tracker={v}, registry={reg_v}"
+        );
     }
 
     println!(

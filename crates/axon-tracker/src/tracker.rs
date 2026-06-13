@@ -17,12 +17,7 @@ pub trait ExperimentTracker: Send + Sync {
     fn log_metric(&self, key: &str, value: f64, step: usize) -> Result<(), TrackerError>;
 
     /// 记录直方图
-    fn log_histogram(
-        &self,
-        key: &str,
-        values: &[f64],
-        step: usize,
-    ) -> Result<(), TrackerError>;
+    fn log_histogram(&self, key: &str, values: &[f64], step: usize) -> Result<(), TrackerError>;
 
     /// 记录图像
     fn log_image(
@@ -74,10 +69,7 @@ mod tests {
     #[test]
     fn test_log_metrics_ext() {
         let tracker = MemoryTracker::new();
-        let metrics = vec![
-            ("loss".to_string(), 0.5),
-            ("accuracy".to_string(), 0.9),
-        ];
+        let metrics = vec![("loss".to_string(), 0.5), ("accuracy".to_string(), 0.9)];
         tracker.log_metrics(&metrics, 0).unwrap();
     }
 }

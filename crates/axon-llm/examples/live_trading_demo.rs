@@ -150,10 +150,19 @@ async fn run_demo(backend: OpenAICompatBackend, query: &str) -> Result<(), DemoE
             },
             Message::tool_result(&tc.id, &mock_result),
         ];
-        let resp3 = backend.complete(&follow_up).await.map_err(DemoError::Backend)?;
-        println!("\nassistant(基于工具结果): {}", resp3.content.unwrap_or_default());
+        let resp3 = backend
+            .complete(&follow_up)
+            .await
+            .map_err(DemoError::Backend)?;
+        println!(
+            "\nassistant(基于工具结果): {}",
+            resp3.content.unwrap_or_default()
+        );
     } else {
-        println!("assistant(未调用工具): {}", resp2.content.unwrap_or_default());
+        println!(
+            "assistant(未调用工具): {}",
+            resp2.content.unwrap_or_default()
+        );
     }
 
     Ok(())

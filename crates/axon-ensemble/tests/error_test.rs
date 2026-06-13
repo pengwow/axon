@@ -46,7 +46,11 @@ fn test_meta_model_failed_is_not_recoverable() {
 #[test]
 fn test_error_display_messages() {
     assert_eq!(
-        EnsembleError::WeightMismatch { expected: 3, actual: 2 }.to_string(),
+        EnsembleError::WeightMismatch {
+            expected: 3,
+            actual: 2
+        }
+        .to_string(),
         "权重数量不匹配: 期望 3, 实际 2"
     );
     assert_eq!(

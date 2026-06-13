@@ -1,5 +1,6 @@
 //! Mock 数据源(测试用)
 
+use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use futures_core::Stream;
 use std::pin::Pin;
@@ -81,25 +82,21 @@ impl DataSource for MockSource {
     }
 
     fn schema(&self) -> &[SchemaField] {
+        // Mock:测试桩不暴露 schema_field(测试桩不参与 schema 校验)
         &[]
     }
 
     async fn query(&self, req: &DataRequest) -> DataResult<Dataset> {
-        Ok(Dataset::new(
-            self.rows.clone(),
-            vec![],
-            self.name.clone(),
-            req.clone(),
-        ))
+        // 走 Dataset::from_ticks 桥接入口(测试桩专用)
+        Dataset::from_ticks(self.rows.clone(), self.name.clone(), req.clone())
     }
 
     async fn stream(
         &self,
         _req: &DataRequest,
-    ) -> DataResult<Pin<Box<dyn Stream<Item = DataResult<Tick>> + Send>>>
-    {
-        // Mock:用自定义 EmptyStream(避免依赖 `futures-util` / `tokio-stream`)
-        Ok(Box::pin(EmptyStream::<DataResult<Tick>>::new()))
+    ) -> DataResult<Pin<Box<dyn Stream<Item = DataResult<RecordBatch>> + Send>>> {
+        // Mock:空 stream(测试桩不流式)
+        Ok(Box::pin(EmptyStream::<DataResult<RecordBatch>>::new()))
     }
 }
 
@@ -110,6 +107,12 @@ impl<T> EmptyStream<T> {
     /// 构造一个空 stream
     pub fn new() -> Self {
         Self(std::marker::PhantomData)
+    }
+}
+
+impl<T> Default for EmptyStream<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -153,7 +156,7 @@ mod tests {
     fn with_tick_series_timestamps_advance_uniformly() {
         let mock = MockSource::with_tick_series("x", 3, 100, |_| 50.0);
         let ds = futures::executor::block_on(mock.query(&make_test_req())).unwrap();
-        let ts: Vec<i64> = ds.iter().map(|t| t.timestamp.nanos).collect();
+        let ts: Vec<i64> = ds.iter_rows().map(|t| t.timestamp.nanos).collect();
         assert_eq!(ts, vec![0, 100, 200]);
     }
 
@@ -161,7 +164,7 @@ mod tests {
     fn with_tick_series_prices_follow_fn() {
         let mock = MockSource::with_tick_series("x", 4, 1, |i| (i * 2) as f64);
         let ds = futures::executor::block_on(mock.query(&make_test_req())).unwrap();
-        let prices: Vec<f64> = ds.iter().map(|t| t.price.as_f64()).collect();
+        let prices: Vec<f64> = ds.iter_rows().map(|t| t.price.as_f64()).collect();
         assert_eq!(prices, vec![0.0, 2.0, 4.0, 6.0]);
     }
 }

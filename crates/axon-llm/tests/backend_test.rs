@@ -7,17 +7,15 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use axon_llm::{LLMBackend, LLMError, ToolDefinition};
 use axon_llm::types::{FinishReason, LLMResponse, Message, TokenUsage, ToolCall};
+use axon_llm::{LLMBackend, LLMError, ToolDefinition};
 
 // ─── 异步测试：纯文本调用 ─────────────────────────────────────
 
 #[tokio::test]
 async fn test_backend_complete_returns_text_response() {
-    let backend = MockBackend::with_responses(vec![LLMResponse::text(
-        "hello",
-        TokenUsage::new(2, 1),
-    )]);
+    let backend =
+        MockBackend::with_responses(vec![LLMResponse::text("hello", TokenUsage::new(2, 1))]);
 
     let resp = backend
         .complete(&[Message::user("hi")])
@@ -107,10 +105,7 @@ async fn test_backend_reports_context_window_size() {
 /// 工具定义必须随消息一起传递给 backend（用于审计 / mock 校验）
 #[tokio::test]
 async fn test_mock_backend_records_last_tool_definitions() {
-    let backend = MockBackend::with_responses(vec![LLMResponse::text(
-        "ok",
-        TokenUsage::default(),
-    )]);
+    let backend = MockBackend::with_responses(vec![LLMResponse::text("ok", TokenUsage::default())]);
     let tools = vec![ToolDefinition {
         name: "ping".to_string(),
         description: "ping".to_string(),

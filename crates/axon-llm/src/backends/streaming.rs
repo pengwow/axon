@@ -130,9 +130,7 @@ fn parse_sse_line(line: &str) -> Vec<TokenDelta> {
                     }
                 }
                 if let Some(fr) = choice.finish_reason {
-                    out.push(TokenDelta::Done {
-                        finish_reason: fr,
-                    });
+                    out.push(TokenDelta::Done { finish_reason: fr });
                 }
             }
             out
@@ -177,18 +175,22 @@ mod tests {
     fn parse_tool_call_start() {
         let line = r#"data: {"choices":[{"delta":{"tool_calls":[{"id":"call_1","function":{"name":"get_price"}}]}}]}"#;
         let deltas = parse_sse_line(line);
-        assert!(deltas.iter().any(|d| matches!(d, TokenDelta::ToolCallStart { id, name }
-            if id == "call_1" && name == "get_price")));
+        assert!(
+            deltas
+                .iter()
+                .any(|d| matches!(d, TokenDelta::ToolCallStart { id, name }
+            if id == "call_1" && name == "get_price"))
+        );
     }
 
     #[test]
     fn parse_tool_call_delta() {
         let line = r#"data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"sym\""}}]}}]}"#;
         let deltas = parse_sse_line(line);
-        assert!(deltas
-            .iter()
-            .any(|d| matches!(d, TokenDelta::ToolCallDelta { arguments_delta, .. }
-                if arguments_delta == r#"{"sym""#)));
+        assert!(deltas.iter().any(
+            |d| matches!(d, TokenDelta::ToolCallDelta { arguments_delta, .. }
+                if arguments_delta == r#"{"sym""#)
+        ));
     }
 
     #[test]
@@ -208,9 +210,7 @@ data: [DONE]
             })
             .collect();
         assert_eq!(contents, vec!["Hi ", "there"]);
-        assert!(deltas
-            .iter()
-            .any(|d| matches!(d, TokenDelta::Done { .. })));
+        assert!(deltas.iter().any(|d| matches!(d, TokenDelta::Done { .. })));
     }
 }
 
@@ -220,9 +220,7 @@ data: [DONE]
 ///
 /// 把所需字段 move 进 stream(避免借用 self 生命周期问题)
 pub fn sse_bytes_to_deltas(
-    body_stream: impl tokio_stream::Stream<Item = Result<bytes::Bytes, reqwest::Error>>
-        + Send
-        + 'static,
+    body_stream: impl tokio_stream::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl tokio_stream::Stream<Item = Result<TokenDelta, LLMError>> + Send + 'static {
     use tokio_stream::StreamExt;
 

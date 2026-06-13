@@ -27,11 +27,18 @@ fn test_weighted_vote_basic() {
     // 加权 buy = 0.7*0.6 + 0.3*0.2 = 0.48
     // 加权 sell = 0.7*0.2 + 0.3*0.6 = 0.32
     // 加权 hold = 0.7*0.2 + 0.3*0.2 = 0.20
-    let preds = vec![make_pred(0.6, 0.2, 0.2, "m1"), make_pred(0.2, 0.6, 0.2, "m2")];
+    let preds = vec![
+        make_pred(0.6, 0.2, 0.2, "m1"),
+        make_pred(0.2, 0.6, 0.2, "m2"),
+    ];
     let strategy = WeightedVoteStrategy::new(vec![0.7, 0.3]).unwrap();
     let result = strategy.combine(&preds);
     assert_eq!(result.action_type, ActionType::Buy);
-    assert!((result.confidence - 0.48).abs() < 1e-9, "期望 0.48, 实际 {}", result.confidence);
+    assert!(
+        (result.confidence - 0.48).abs() < 1e-9,
+        "期望 0.48, 实际 {}",
+        result.confidence
+    );
 }
 
 #[test]
@@ -46,11 +53,7 @@ fn test_weighted_vote_weights_must_sum_to_one() {
 #[test]
 fn test_weighted_vote_uniform_constructor() {
     let strategy = WeightedVoteStrategy::uniform(3);
-    let weights_sum: f64 = vec![0.33, 0.33, 0.34]
-        .iter()
-        .sum();
-    let _ = weights_sum;
-    // 3 个均匀权重
+    // 3 个均匀权重(实际值由 strategy 内部决定,此处仅验证构造成功)
     let preds = vec![
         make_pred(0.5, 0.3, 0.2, "m1"),
         make_pred(0.5, 0.3, 0.2, "m2"),

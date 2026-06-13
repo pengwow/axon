@@ -137,12 +137,8 @@ mod tests {
 
     #[test]
     fn new_fills_timestamp_and_empty_trace() {
-        let record = DecisionRecord::new(
-            "d1",
-            ExplainMode::ActionOnly,
-            "buy BTC?",
-            sample_action(),
-        );
+        let record =
+            DecisionRecord::new("d1", ExplainMode::ActionOnly, "buy BTC?", sample_action());
         assert_eq!(record.decision_id, "d1");
         assert_eq!(record.mode, ExplainMode::ActionOnly);
         assert_eq!(record.query, "buy BTC?");
@@ -158,12 +154,7 @@ mod tests {
             action: None,
             observation: None,
         };
-        let record = DecisionRecord::with_reasoning(
-            "d2",
-            "test",
-            vec![step],
-            sample_action(),
-        );
+        let record = DecisionRecord::with_reasoning("d2", "test", vec![step], sample_action());
         assert_eq!(record.mode, ExplainMode::WithReasoning);
         assert_eq!(record.reasoning_trace.len(), 1);
     }

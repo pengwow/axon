@@ -45,10 +45,7 @@ impl ModelRegistry {
     }
 
     /// 创建并指定持久化目录
-    pub fn with_persist_dir(
-        storage: Arc<dyn StorageBackendTrait>,
-        persist_dir: PathBuf,
-    ) -> Self {
+    pub fn with_persist_dir(storage: Arc<dyn StorageBackendTrait>, persist_dir: PathBuf) -> Self {
         std::fs::create_dir_all(&persist_dir).ok();
         Self {
             storage,
@@ -100,11 +97,7 @@ impl ModelRegistry {
     }
 
     /// 获取指定版本（None 返回最新）
-    pub async fn get(
-        &self,
-        name: &str,
-        version: Option<&SemVer>,
-    ) -> RegistryResult<ModelVersion> {
+    pub async fn get(&self, name: &str, version: Option<&SemVer>) -> RegistryResult<ModelVersion> {
         let versions = self
             .index
             .get(name)
@@ -115,16 +108,12 @@ impl ModelRegistry {
                 .iter()
                 .find(|mv| &mv.version == v)
                 .cloned()
-                .ok_or_else(|| {
-                    RegistryError::VersionNotFound(name.to_string(), v.to_string())
-                }),
+                .ok_or_else(|| RegistryError::VersionNotFound(name.to_string(), v.to_string())),
             None => versions
                 .iter()
                 .max_by_key(|mv| mv.version.clone())
                 .cloned()
-                .ok_or_else(|| {
-                    RegistryError::VersionNotFound(name.to_string(), "latest".into())
-                }),
+                .ok_or_else(|| RegistryError::VersionNotFound(name.to_string(), "latest".into())),
         }
     }
 
@@ -155,20 +144,20 @@ impl ModelRegistry {
         let mut results: Vec<ModelVersion> = versions
             .iter()
             .filter(|mv| {
-                if let Some(stage) = filter.stage {
-                    if mv.stage != stage {
-                        return false;
-                    }
+                if let Some(stage) = filter.stage
+                    && mv.stage != stage
+                {
+                    return false;
                 }
-                if let Some(ref min) = filter.min_version {
-                    if &mv.version < min {
-                        return false;
-                    }
+                if let Some(ref min) = filter.min_version
+                    && &mv.version < min
+                {
+                    return false;
                 }
-                if let Some(ref max) = filter.max_version {
-                    if &mv.version > max {
-                        return false;
-                    }
+                if let Some(ref max) = filter.max_version
+                    && &mv.version > max
+                {
+                    return false;
                 }
                 for (k, v) in &filter.tags {
                     if mv.metadata.tags.get(k).map(String::as_str) != Some(v.as_str()) {
@@ -348,8 +337,7 @@ impl ModelRegistry {
                 .map_err(|e| RegistryError::Serialization(e.to_string()))?;
             let path = self.persist_dir.join(name).join("registry.json");
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| RegistryError::Io(e.to_string()))?;
+                std::fs::create_dir_all(parent).map_err(|e| RegistryError::Io(e.to_string()))?;
             }
             std::fs::write(&path, data).map_err(|e| RegistryError::Io(e.to_string()))?;
         }
@@ -520,7 +508,10 @@ mod tests {
 
         // 过滤 Production
         let prod = registry
-            .list_versions("ppo", &VersionFilter::new().with_stage(ModelStage::Production))
+            .list_versions(
+                "ppo",
+                &VersionFilter::new().with_stage(ModelStage::Production),
+            )
             .await
             .unwrap();
         assert_eq!(prod.len(), 1);

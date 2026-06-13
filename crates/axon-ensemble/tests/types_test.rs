@@ -42,5 +42,9 @@ fn test_action_probabilities_handles_zero_total() {
     // 总和为 0 — 退化为均匀分布
     let probs = ActionProbabilities::new(0.0, 0.0, 0.0);
     let sum = probs.buy + probs.sell + probs.hold;
-    assert!((sum - 1.0).abs() < 1e-9, "全 0 应退化为均匀分布，总和={}", sum);
+    assert!(
+        (sum - 1.0).abs() < 1e-9,
+        "全 0 应退化为均匀分布，总和={}",
+        sum
+    );
 }

@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use crate::error::ExplainabilityError;
-use crate::types::{ActionAttribution, ActionSnapshot, AttentionWeights, CounterfactualExplanation, Explanation};
+use crate::types::{
+    ActionAttribution, ActionSnapshot, AttentionWeights, CounterfactualExplanation, Explanation,
+};
 
 /// 模型预测器
 ///

@@ -36,9 +36,9 @@ pub mod fuzz;
 /// 契约测试（API/数据契约稳定性）
 pub mod contract;
 
+pub mod e2e_pipeline;
 /// 集成测试模块（按 crate 维度组织）
 pub mod hpo_tracker;
-pub mod walkforward_registry;
-pub mod tracker_registry;
 pub mod multi_objective;
-pub mod e2e_pipeline;
+pub mod tracker_registry;
+pub mod walkforward_registry;
