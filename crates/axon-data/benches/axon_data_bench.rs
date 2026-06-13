@@ -1,7 +1,7 @@
 //! axon-data Criterion 基准测试
 //!
 //! 运行:`cargo bench -p axon-data --features csv-source --features parquet-source`
-//! 6 个 group: lru_cache / dataset_lazy / csv_parse / mock_generate / parquet_load / parquet_stream
+//! 7 个 group: lru_cache / dataset_lazy / csv_parse / mock_generate / parquet_load / parquet_stream / bar_aggregate
 //!
 //! 关键约束(从项目 lessons learned 提取):
 //! - 用 black_box() 包装动态值,避免常量折叠
@@ -152,7 +152,8 @@ criterion_group!(
     benches,
     bench_lru_cache,
     bench_dataset_lazy,
-    bench_mock_generate
+    bench_mock_generate,
+    bench_bar_aggregate
 );
 
 #[cfg(feature = "csv-source")]
@@ -162,7 +163,8 @@ criterion_group!(
     bench_lru_cache,
     bench_dataset_lazy,
     bench_csv_parse,
-    bench_mock_generate
+    bench_mock_generate,
+    bench_bar_aggregate
 );
 
 #[cfg(feature = "parquet-source")]
@@ -173,7 +175,8 @@ criterion_group!(
     bench_dataset_lazy,
     bench_mock_generate,
     bench_parquet_load,
-    bench_parquet_stream
+    bench_parquet_stream,
+    bench_bar_aggregate
 );
 
 #[cfg(feature = "csv-source")]
@@ -185,7 +188,8 @@ criterion_group!(
     bench_csv_parse,
     bench_mock_generate,
     bench_parquet_load,
-    bench_parquet_stream
+    bench_parquet_stream,
+    bench_bar_aggregate
 );
 criterion_main!(benches);
 
@@ -392,6 +396,42 @@ fn bench_parquet_stream(c: &mut Criterion) {
                         total_rows
                     });
                     black_box(n);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// group 7: BarAggregator 聚合吞吐(PR6)
+fn bench_bar_aggregate(c: &mut Criterion) {
+    use axon_data::bar::BarAggregator;
+
+    let mut group = c.benchmark_group("bar_aggregate");
+    for &n_ticks in &[1_000usize, 10_000, 100_000] {
+        // 生成 n_ticks 个 tick(每秒 1 个)
+        let ticks: Vec<axon_core::market::Tick> = (0..n_ticks)
+            .map(|i| {
+                axon_core::market::Tick::new(
+                    axon_core::time::Timestamp::from_nanos(i as i64 * 1_000_000_000),
+                    axon_core::types::Price::from_f64(100.0 + (i % 100) as f64),
+                    axon_core::types::Quantity::from_f64(1.0),
+                    axon_core::market::Side::Buy,
+                )
+            })
+            .collect();
+
+        group.bench_with_input(
+            BenchmarkId::new("aggregate_1m", n_ticks),
+            &n_ticks,
+            |b, _| {
+                b.iter(|| {
+                    let bars = BarAggregator::aggregate_ticks(
+                        black_box(&ticks).clone().into_iter(),
+                        Frequency::Min1,
+                    )
+                    .unwrap();
+                    black_box(bars.len());
                 });
             },
         );

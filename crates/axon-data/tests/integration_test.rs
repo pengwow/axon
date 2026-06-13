@@ -335,3 +335,99 @@ mod parquet_fixtures {
         assert_eq!(ds.checksum, ds2.checksum);
     }
 }
+
+// ─── PR6: Bar Aggregator + IPC 集成测试 ────────────────────────
+
+/// PR6 Bar 聚合 + IPC roundtrip 集成测试
+#[test]
+fn mock_to_bar_aggregate_and_ipc_roundtrip() {
+    use axon_data::bar::{BarAggregator, BarDataset};
+    use axon_data::ipc::{IpcReader, IpcWriter};
+    use axon_data::DataSource;
+    use tempfile::NamedTempFile;
+
+    // 1. MockSource 生成 100 个 tick(每秒 1 个)
+    let mock = MockSource::with_tick_series("BTCUSDT", 100, 1_000_000_000, |i| {
+        100.0 + (i % 10) as f64
+    });
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let req = DataRequest::new("BTCUSDT", Utc::now(), Utc::now(), Frequency::Tick);
+    let ds = rt.block_on(mock.query(&req)).unwrap();
+
+    // 2. 聚合为 1m Bar
+    let bars = BarAggregator::aggregate_ticks(ds.iter_rows(), Frequency::Min1).unwrap();
+    assert!(!bars.is_empty());
+
+    // 3. 构造 BarDataset
+    let bar_req = DataRequest::new("BTCUSDT", Utc::now(), Utc::now(), Frequency::Min1);
+    let bar_ds =
+        BarDataset::from_bars(bars, "mock".into(), bar_req, Frequency::Min1).unwrap();
+
+    // 4. IPC roundtrip
+    let tmp = NamedTempFile::new().unwrap();
+    IpcWriter::write_to_path(tmp.path(), &bar_ds).unwrap();
+    let loaded = IpcReader::read_bar(tmp.path()).unwrap();
+
+    assert_eq!(loaded.len(), bar_ds.len());
+    assert_eq!(loaded.checksum, bar_ds.checksum);
+    assert_eq!(loaded.frequency(), Frequency::Min1);
+}
+
+/// PR6 Bar 聚合 OHLCV 正确性测试
+#[test]
+fn bar_aggregate_ohlc_correctness() {
+    use axon_core::market::{Side, Tick};
+    use axon_core::time::Timestamp;
+    use axon_core::types::{Price, Quantity};
+    use axon_data::bar::BarAggregator;
+
+    // 3 个 tick 在同一分钟内:价格 100, 110, 105
+    let ticks = vec![
+        Tick::new(
+            Timestamp::from_nanos(0),
+            Price::from_f64(100.0),
+            Quantity::from_f64(10.0),
+            Side::Buy,
+        ),
+        Tick::new(
+            Timestamp::from_nanos(1_000_000_000),
+            Price::from_f64(110.0),
+            Quantity::from_f64(20.0),
+            Side::Buy,
+        ),
+        Tick::new(
+            Timestamp::from_nanos(2_000_000_000),
+            Price::from_f64(105.0),
+            Quantity::from_f64(15.0),
+            Side::Sell,
+        ),
+    ];
+
+    let bars = BarAggregator::aggregate_ticks(ticks.into_iter(), Frequency::Min1).unwrap();
+    assert_eq!(bars.len(), 1);
+
+    let bar = bars[0];
+    assert_eq!(bar.open, Price::from_f64(100.0));
+    assert_eq!(bar.high, Price::from_f64(110.0));
+    assert_eq!(bar.low, Price::from_f64(100.0));
+    assert_eq!(bar.close, Price::from_f64(105.0));
+    assert!((bar.volume.as_f64() - 45.0).abs() < f64::EPSILON);
+}
+
+/// PR6 不支持频率错误测试
+#[test]
+fn unsupported_frequency_error() {
+    use axon_core::market::{Side, Tick};
+    use axon_core::time::Timestamp;
+    use axon_core::types::{Price, Quantity};
+    use axon_data::bar::BarAggregator;
+
+    let ticks = vec![Tick::new(
+        Timestamp::from_nanos(0),
+        Price::from_f64(100.0),
+        Quantity::from_f64(1.0),
+        Side::Buy,
+    )];
+    let result = BarAggregator::aggregate_ticks(ticks.into_iter(), Frequency::Tick);
+    assert!(result.is_err());
+}

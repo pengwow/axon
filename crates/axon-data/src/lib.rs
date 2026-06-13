@@ -20,8 +20,10 @@
 #![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
 
+pub mod bar;
 pub mod dataset;
 pub mod error;
+pub mod ipc;
 pub mod pipeline;
 pub mod sources;
 pub mod traits;

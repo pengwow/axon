@@ -638,6 +638,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - fuzz 测试 `dataset_checksum_is_pure` / `dataset_filter_count_lte_input` / `dataset_take_skip_inverse` / `dataset_by_time_range_bounds_inclusive` 全部沿用
   - **验收**:67 tests(46 unit + 16 integration + 5 doc),workspace 全量回归 0 失败,axon-data 0 新 clippy 警告
 
+- **`axon-data` PR6 Bar Aggregator + Arrow IPC Writer(增量)**:
+  - **`BarDataset` 结构**(`src/bar/bar_dataset.rs`):6 列 Arrow schema(`timestamp` int64 ns / `open` f64 / `high` f64 / `low` f64 / `close` f64 / `volume` f64),复用 `axon_core::market::Bar`,通过 `From<Bar>` trait 零拷贝转换
+  - **`BarAggregator`**(`src/bar/mod.rs`):独立聚合函数 `aggregate_ticks(Iterator<Item=Tick>, Frequency) -> DataResult<Vec<Bar>>`,支持 9 种非 Tick 频率;自实现 bucket 循环(bucket_start 纳秒整数除法取整,零浮点误差)
+  - **`bars_to_batches()`**:`Vec<Bar>` → `RecordBatch` 转换,6 列 Arrow 数组构建
+  - **`IpcWritable` trait**(`src/ipc/mod.rs`):统一 `Dataset` / `BarDataset` 的写入接口(`schema()` / `batches()` / `source()` / `checksum()` / `frequency_tag()`)
+  - **`IpcWriter`** / **`IpcReader`**:Arrow IPC 文件读写,`write_to_path()` / `read_tick()` / `read_bar()` / `read_batches()`;Reader 通过 schema 列数和 metadata frequency 区分 Tick vs Bar
+  - **错误变体扩展**(`src/error.rs`):`UnsupportedFrequency(String)` / `IpcSchemaMismatch { expected, actual, expected_type }`
+  - **聚合边界行为**:离线场景下所有有 tick 的 bucket 都产生 bar(与设计文档"不完整尾部丢弃"的描述已同步修正)
+  - **测试**:
+    - 集成测试 3 个新 case:`mock_to_bar_aggregate_and_ipc_roundtrip` / `bar_aggregate_ohlc_correctness` / `unsupported_frequency_error`
+    - proptest 3 个新 case:`bar_aggregate_count_lte_input` / `bar_aggregate_ohlc_consistency` / `ipc_bar_roundtrip_checksum`
+    - bench group `bar_aggregate`:1k / 10k / 100k ticks 聚合吞吐
+  - **验收**:~90+ tests 全过,0 新 clippy 警告,workspace 全量回归无失败
+
 - **告警抑制审计** (workspace rule #4, commit 8ab90e7):
   - 删除 `live_trading_demo.rs` `Tool` variant 上的 `#[allow(dead_code)]`(变体已在 match / Display 中使用,rustc 不报警)
   - 删除 `openai_compat.rs` `_ensure_role_used` 死函数 + 注释(`Role` 未 import,fn 无 caller,完全冗余)
@@ -690,6 +704,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **axon-llm 大量应用 rust 2024 let-chain**：`react_agent.rs` 嵌套 `if let` 合并
 
 **Fixes — 2026-06-13 批次**
+
+- **axon-design 验收勾选同步（32 个文档）**：基于实际代码 / 测试 / 基准情况，逐文档评估并勾选/标注未勾的验收项：
+  - `01-phase1-core` (13 文档): 13/13 文档已更新；功能项全部勾选，性能项（无独立 benchmark）保留未勾选 + 标注原因
+  - `02-phase1-rl` (7 文档): 7/7 文档已更新；`07-examples.md` 后续工作部分按实际实现勾选
+  - `04-phase3-ai` (5 文档): 4/5 有未勾项已处理；`05-compliance.md` 4 项全部未实现，保留未勾
+  - `06-supplement` (6 文档): 全部已更新；`05-integration.md` 已全勾无需处理
+  - 已实现/已测试项标记为 `[x]` 并附 `code/test/bench` 路径说明；未实现项标记为 `[ ]` 并附原因
+  - 跳过 `03-phase2-training` (4 文档, 全部已勾选) / `05-phase4-production` (5 文档, 对应 crate 未实现) / `02-ci` (4 文档, 配置而非 TDD)
 
 - **registry 并发 register 版本号竞态**：原 `next_version()` 持 `index` DashMap 读锁计算 max+1，与 `storage.upload().await` 跨 .await 边界，并发 register 同一 model 可能产生重复 patch 版本号。修复方案：`ModelRegistry` 新增 `version_counters: DashMap<String, Arc<AtomicU64>>`，每个 model name 独立 `AtomicU64` 计数器，`fetch_add(SeqCst)` 原子分配，不持 `index` 锁、不跨 `.await`（详见 [registry.rs](file:///Users/liupeng/workspace/quant/axon/crates/axon-registry/src/registry.rs)）
 - **axon-backtest `ModelType::default()` clippy 警告**（`derivable_impls`）：手写 `impl Default` 改用 `#[derive(Default)]` + `#[default]` 标记 `Linear`

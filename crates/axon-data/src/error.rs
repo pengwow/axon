@@ -76,6 +76,21 @@ pub enum DataError {
     /// 内部错误(Arrow / IO 转换失败、不可恢复的内部状态)
     #[error("internal error: {0}")]
     Internal(String),
+
+    /// 不支持的频率(如 Frequency::Tick 用于 Bar 聚合)
+    #[error("unsupported frequency: {0}")]
+    UnsupportedFrequency(String),
+
+    /// IPC 文件 schema 不匹配
+    #[error("IPC schema mismatch: expected {expected}-column {expected_type}, got {actual}-column")]
+    IpcSchemaMismatch {
+        /// 期望的列数
+        expected: usize,
+        /// 实际的列数
+        actual: usize,
+        /// 期望的数据类型(tick/bar)
+        expected_type: String,
+    },
 }
 
 /// 统一 Result 类型别名
