@@ -6,7 +6,7 @@ use axon_compliance::{
     AuditEventType, ComplianceConfig, ComplianceModule, LiquidityType, OrderType, TradeFilter,
     TradeRecord, TradeSide, TradeStatus,
 };
-use chrono::Utc;
+use chrono::{Datelike, Utc};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -18,6 +18,19 @@ fn create_test_config() -> ComplianceConfig {
         large_trade_threshold: 100000.0,
         position_limit: 1000000.0,
         max_portfolio_concentration: 0.4,
+        data_retention_years: 7,
+        regulators: vec!["SEC".into()],
+    }
+}
+
+/// 创建低限制测试配置
+fn create_low_limit_config() -> ComplianceConfig {
+    ComplianceConfig {
+        account_id: "test_account".into(),
+        base_currency: "USDT".into(),
+        large_trade_threshold: 10000.0,
+        position_limit: 50.0,
+        max_portfolio_concentration: 30.0,
         data_retention_years: 7,
         regulators: vec!["SEC".into()],
     }
@@ -165,4 +178,162 @@ fn test_trade_stats_calculation() {
     assert_eq!(stats.winning_trades, 1);
     assert_eq!(stats.losing_trades, 1);
     assert!((stats.win_rate - 0.5).abs() < f64::EPSILON);
+}
+
+/// 测试日报生成集成流程
+#[test]
+fn test_daily_report_integration() {
+    let tmp = TempDir::new().unwrap();
+    let config = create_test_config();
+    let mut compliance = ComplianceModule::new(config, tmp.path()).unwrap();
+
+    // 记录交易
+    let trade1 = create_test_trade("BTCUSDT", TradeSide::Buy, 1.0, 50000.0);
+    compliance.record_trade(trade1).unwrap();
+
+    // 生成日报
+    let today = chrono::Utc::now().date_naive();
+    let report = compliance.generate_daily_report(today, 100000.0);
+
+    assert_eq!(report.total_trades, 1);
+    assert_eq!(report.account_id, "test_account");
+}
+
+/// 测试月报生成集成流程
+#[test]
+fn test_monthly_report_integration() {
+    let tmp = TempDir::new().unwrap();
+    let config = create_test_config();
+    let mut compliance = ComplianceModule::new(config, tmp.path()).unwrap();
+
+    // 记录交易
+    let trade = create_test_trade("BTCUSDT", TradeSide::Buy, 1.0, 50000.0);
+    compliance.record_trade(trade).unwrap();
+
+    // 生成月报
+    let now = chrono::Utc::now();
+    let report = compliance
+        .generate_monthly_report(now.year() as u32, now.month())
+        .unwrap();
+
+    assert_eq!(report.total_trades, 1);
+    assert_eq!(report.account_id, "test_account");
+}
+
+/// 测试年报生成集成流程
+#[test]
+fn test_annual_report_integration() {
+    let tmp = TempDir::new().unwrap();
+    let config = create_test_config();
+    let mut compliance = ComplianceModule::new(config, tmp.path()).unwrap();
+
+    // 记录交易
+    let trade = create_test_trade("BTCUSDT", TradeSide::Buy, 1.0, 50000.0);
+    compliance.record_trade(trade).unwrap();
+
+    // 生成年报
+    let now = chrono::Utc::now();
+    let report = compliance.generate_annual_report(now.year() as u32, 100000.0);
+
+    assert_eq!(report.total_trades, 1);
+    assert_eq!(report.account_id, "test_account");
+}
+
+/// 测试报告导出集成流程
+#[test]
+fn test_report_export_integration() {
+    use axon_compliance::ReportFormat;
+
+    let tmp = TempDir::new().unwrap();
+    let config = create_test_config();
+    let mut compliance = ComplianceModule::new(config, tmp.path()).unwrap();
+
+    // 记录交易
+    let trade = create_test_trade("BTCUSDT", TradeSide::Buy, 1.0, 50000.0);
+    compliance.record_trade(trade).unwrap();
+
+    // 生成日报
+    let today = chrono::Utc::now().date_naive();
+    let report = compliance.generate_daily_report(today, 100000.0);
+
+    // 导出为 JSON
+    let json_data = compliance
+        .export_report(&report, ReportFormat::JSON)
+        .unwrap();
+    assert!(!json_data.is_empty());
+
+    // 导出为 CSV
+    let csv_data = compliance
+        .export_report(&report, ReportFormat::CSV)
+        .unwrap();
+    assert!(!csv_data.is_empty());
+}
+
+/// 测试监管报送集成流程
+#[test]
+fn test_regulatory_submission_integration() {
+    use axon_compliance::{RegulatorFormat, SubmissionType};
+
+    let tmp = TempDir::new().unwrap();
+    let config = create_test_config();
+    let mut compliance = ComplianceModule::new(config, tmp.path()).unwrap();
+
+    // 记录交易
+    let trade = create_test_trade("BTCUSDT", TradeSide::Buy, 1.0, 50000.0);
+    compliance.record_trade(trade).unwrap();
+
+    // 生成监管报送
+    let now = Utc::now();
+    let submission = compliance
+        .generate_submission(
+            "SEC",
+            SubmissionType::Daily,
+            now - chrono::Duration::days(1),
+            now,
+            RegulatorFormat::JSON,
+        )
+        .unwrap();
+
+    assert_eq!(submission.regulator, "SEC");
+    assert_eq!(submission.data.total_turnover, 50000.0);
+
+    // 导出为 JSON
+    let data = ComplianceModule::export_submission(&submission).unwrap();
+    let json_str = String::from_utf8(data).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    assert!(parsed.is_object());
+}
+
+/// 测试持仓限制检查集成
+#[test]
+fn test_position_limit_check_integration() {
+    let tmp = TempDir::new().unwrap();
+    let config = create_low_limit_config();
+    let mut compliance = ComplianceModule::new(config, tmp.path()).unwrap();
+
+    // 记录超过限制的交易（限制 50，交易 100）
+    let trade = create_test_trade("BTCUSDT", TradeSide::Buy, 100.0, 50000.0);
+    compliance.record_trade(trade).unwrap();
+
+    // 检查持仓限制
+    let limits = compliance.check_position_limits();
+    assert!(limits.iter().any(|l| l.breach));
+}
+
+/// 测试集中度检查集成
+#[test]
+fn test_concentration_limit_check_integration() {
+    let tmp = TempDir::new().unwrap();
+    let config = create_low_limit_config();
+    let mut compliance = ComplianceModule::new(config, tmp.path()).unwrap();
+
+    // 记录同一交易对的多笔交易
+    let trade1 = create_test_trade("BTCUSDT", TradeSide::Buy, 1.0, 50000.0);
+    let trade2 = create_test_trade("BTCUSDT", TradeSide::Buy, 1.0, 50000.0);
+    compliance.record_trade(trade1).unwrap();
+    compliance.record_trade(trade2).unwrap();
+
+    // 检查集中度限制（BTCUSDT 占 100%，应触发违规）
+    let checks = compliance.check_concentration_limits();
+    assert!(checks.iter().any(|c| c.breach));
 }

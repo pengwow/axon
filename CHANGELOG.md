@@ -702,6 +702,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **ComplianceModule**：核心模块，交易记录 + 自动审计事件生成 + 监管阈值检查 + 查询过滤 + 统计分析
   - **测试**：21 个单元测试 + 1 文档测试 + 4 个集成测试，全部通过
   - **验收**：`cargo clippy -p axon-compliance -- -D warnings` 零警告
+- **`axon-compliance` PR2 报告生成**：
+  - **报告类型**：`DailyReport`（日报：盈亏/费用/持仓快照/胜率）、`MonthlyReport`（月报：夏普比率/最大回撤/持仓汇总）、`AnnualReport`（年报：年化回报/合规评分/监管备注）
+  - **报告格式**：`ReportFormat` 枚举（JSON / CSV），支持 serde 序列化/反序列化
+  - **日报生成器**：`DailyReportGenerator::generate` — 按日期过滤交易，计算盈亏、费用明细、持仓快照
+  - **月报生成器**：`MonthlyReportGenerator::generate` — 汇总月度指标，计算夏普比率（`compute_sharpe_ratio`）、最大回撤、胜率
+  - **年报生成器**：`AnnualReportGenerator::generate` — 年度汇总，计算年化回报率、合规评分（`compute_compliance_score`）、监管备注生成（`generate_regulatory_notes`）
+  - **报告导出器**：`ReportExporter::export` — JSON（serde_json pretty）和 CSV（csv crate 扁平化）两种格式导出
+  - **ComplianceModule 扩展**：新增 `generate_daily_report` / `generate_monthly_report` / `generate_annual_report` / `export_report` 四个方法
+  - **测试**：34 个单元测试 + 1 文档测试 + 8 个集成测试，全部通过
+  - **验收**：`cargo clippy -p axon-compliance -- -D warnings` 零警告，`cargo fmt -p axon-compliance` 通过
+- **`axon-compliance` PR3 监管报送 + PyO3 绑定**：
+  - **监管类型**：`RegulatorySubmission`（监管报送）、`SubmissionType`（Daily/Weekly/Monthly/Quarterly/Annual/EventDriven）、`RegulatoryData`（监管数据）、`PositionLimit`（持仓限制）、`ConcentrationCheck`（集中度检查）、`LargeTradeReport`（大额交易报告）、`RegulatorFormat`（JSON/CSV）
+  - **监管指标计算**：`RegulatoryMetricsCalculator` — 计算总成交额、持仓限制检查、集中度检查、大额交易检测
+  - **报送生成器**：`SubmissionGenerator::generate` — 生成监管报送，支持 JSON/CSV 格式导出
+  - **ComplianceModule 扩展**：新增 `calculate_regulatory_metrics` / `generate_submission` / `export_submission` / `check_position_limits` / `check_concentration_limits` 五个方法
+  - **PyO3 绑定**：`PyComplianceModule` — Python 接口，支持核心方法（record_trade、generate_daily_report、generate_monthly_report、generate_annual_report、verify_audit_integrity）
+  - **测试**：7 个单元测试 + 1 文档测试 + 11 个集成测试，全部通过
+  - **验收**：`cargo clippy -p axon-compliance -- -D warnings` 零警告，`cargo fmt -p axon-compliance` 通过
 
 - **告警抑制审计** (workspace rule #4, commit 8ab90e7):
   - 删除 `live_trading_demo.rs` `Tool` variant 上的 `#[allow(dead_code)]`(变体已在 match / Display 中使用,rustc 不报警)

@@ -63,17 +63,26 @@
 
 pub mod audit;
 pub mod error;
+#[cfg(feature = "python")]
+mod python;
+pub mod regulator;
+pub mod report;
 pub mod types;
 
 // 重新导出常用类型
 pub use audit::{AuditLog, FileStorage};
 pub use error::{ComplianceError, ComplianceResult};
+pub use regulator::{
+    ConcentrationCheck, LargeTradeReport, PositionLimit, RegulatorFormat, RegulatoryData,
+    RegulatorySubmission, SubmissionType,
+};
+pub use report::{AnnualReport, DailyReport, MonthlyReport, ReportExporter, ReportFormat};
 pub use types::{
     AuditEvent, AuditEventType, ComplianceConfig, LiquidityType, OrderId, OrderType, TradeFilter,
     TradeId, TradeRecord, TradeSide, TradeStats, TradeStatus,
 };
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 
 /// 合规模块主结构
 pub struct ComplianceModule {
@@ -306,6 +315,138 @@ impl ComplianceModule {
         }
 
         Ok(())
+    }
+
+    /// 生成日报
+    pub fn generate_daily_report(&self, date: NaiveDate, starting_balance: f64) -> DailyReport {
+        // 过滤指定日期的交易
+        let trades: Vec<&TradeRecord> = self
+            .trade_records
+            .iter()
+            .filter(|t| t.execution_time.date_naive() == date)
+            .collect();
+
+        report::daily::DailyReportGenerator::generate(
+            date,
+            &self.config.account_id,
+            starting_balance,
+            &trades,
+            &self.config.base_currency,
+        )
+    }
+
+    /// 生成月报
+    pub fn generate_monthly_report(
+        &self,
+        year: u32,
+        month: u32,
+    ) -> ComplianceResult<MonthlyReport> {
+        // 过滤指定月份的交易
+        let trades: Vec<&TradeRecord> = self
+            .trade_records
+            .iter()
+            .filter(|t| {
+                let d = t.execution_time.date_naive();
+                d.year() as u32 == year && d.month() == month
+            })
+            .collect();
+
+        // 统计活跃天数
+        let active_days: u32 = trades
+            .iter()
+            .map(|t| t.execution_time.date_naive())
+            .collect::<std::collections::HashSet<_>>()
+            .len() as u32;
+
+        report::monthly::MonthlyReportGenerator::generate(
+            year,
+            month,
+            &self.config.account_id,
+            &trades,
+            active_days,
+        )
+    }
+
+    /// 生成年报
+    pub fn generate_annual_report(&self, year: u32, initial_balance: f64) -> AnnualReport {
+        // 过滤指定年份的交易
+        let trades: Vec<&TradeRecord> = self
+            .trade_records
+            .iter()
+            .filter(|t| t.execution_time.date_naive().year() as u32 == year)
+            .collect();
+
+        // 统计活跃月数
+        let active_months: u32 = trades
+            .iter()
+            .map(|t| t.execution_time.date_naive().month())
+            .collect::<std::collections::HashSet<_>>()
+            .len() as u32;
+
+        report::annual::AnnualReportGenerator::generate(
+            year,
+            &self.config.account_id,
+            initial_balance,
+            &trades,
+            active_months,
+        )
+    }
+
+    /// 导出报告为指定格式
+    pub fn export_report<T: serde::Serialize>(
+        &self,
+        report: &T,
+        format: ReportFormat,
+    ) -> ComplianceResult<Vec<u8>> {
+        ReportExporter::export(report, format)
+    }
+
+    /// 计算监管指标
+    pub fn calculate_regulatory_metrics(&self) -> regulator::RegulatoryData {
+        let calculator =
+            regulator::metrics::RegulatoryMetricsCalculator::new(&self.config, &self.trade_records);
+        calculator.calculate_all()
+    }
+
+    /// 生成监管报送
+    pub fn generate_submission(
+        &self,
+        regulator_name: &str,
+        submission_type: regulator::SubmissionType,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        format: regulator::RegulatorFormat,
+    ) -> ComplianceResult<regulator::RegulatorySubmission> {
+        let generator =
+            regulator::submission::SubmissionGenerator::new(&self.config, &self.trade_records);
+        generator.generate(
+            regulator_name,
+            submission_type,
+            period_start,
+            period_end,
+            format,
+        )
+    }
+
+    /// 导出监管报送
+    pub fn export_submission(
+        submission: &regulator::RegulatorySubmission,
+    ) -> ComplianceResult<Vec<u8>> {
+        regulator::submission::SubmissionGenerator::export(submission)
+    }
+
+    /// 检查持仓限制
+    pub fn check_position_limits(&self) -> Vec<regulator::PositionLimit> {
+        let calculator =
+            regulator::metrics::RegulatoryMetricsCalculator::new(&self.config, &self.trade_records);
+        calculator.check_position_limits()
+    }
+
+    /// 检查集中度限制
+    pub fn check_concentration_limits(&self) -> Vec<regulator::ConcentrationCheck> {
+        let calculator =
+            regulator::metrics::RegulatoryMetricsCalculator::new(&self.config, &self.trade_records);
+        calculator.check_concentration_limits()
     }
 }
 
