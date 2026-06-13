@@ -32,7 +32,8 @@ impl OrderManager {
         }
 
         order.status = OrderStatus::Submitted;
-        order.updated_at = Utc::now();
+        let now = Utc::now();
+        order.updated_at = now;
         let order_id = order.id;
 
         if let Some(ref key) = order.idempotency_key {
@@ -42,8 +43,8 @@ impl OrderManager {
         self.active_orders.write().insert(order_id, order.clone());
         self.order_history.write().push(OrderRecord {
             order,
-            fills: Vec::new(),
-            created_at: Utc::now(),
+            fills: Vec::with_capacity(4), // 预分配 4 个 fill 的空间
+            created_at: now,
             completed_at: None,
         });
 

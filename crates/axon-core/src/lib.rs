@@ -44,6 +44,10 @@ pub mod time;
 pub mod types;
 pub mod volatility;
 
+/// SIMD 加速模块（使用 unsafe SIMD intrinsics）
+#[allow(unsafe_code)]
+pub mod simd;
+
 pub use error::{Error, Result};
 
 // 市场数据核心类型 re-export（便于 `axon_core::Tick` 等短路径）

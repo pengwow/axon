@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
+use crate::utils::now_unix_secs;
+
 pub struct CircuitBreaker {
     active: AtomicBool,
     activated_at: AtomicI64,
@@ -42,13 +44,6 @@ impl CircuitBreaker {
         self.active.store(false, Ordering::Release);
         self.activated_at.store(0, Ordering::Relaxed);
     }
-}
-
-fn now_unix_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
 }
 
 #[cfg(test)]

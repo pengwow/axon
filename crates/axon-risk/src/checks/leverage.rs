@@ -3,6 +3,7 @@ use axon_core::portfolio::Portfolio;
 use crate::config::RiskConfig;
 use crate::error::{RiskReason, RiskResult};
 
+#[inline]
 pub fn check_leverage(portfolio: &Portfolio, config: &RiskConfig) -> RiskResult {
     let cash = portfolio.base_cash();
     if cash <= 0.0 {

@@ -5,6 +5,7 @@ use axon_core::portfolio::Portfolio;
 use crate::config::RiskConfig;
 use crate::error::{RiskReason, RiskResult};
 
+#[inline]
 pub fn check_position_limit(
     order: &Order,
     portfolio: &Portfolio,

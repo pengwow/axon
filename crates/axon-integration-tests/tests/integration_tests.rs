@@ -9,6 +9,7 @@ use axon_integration_tests::e2e_pipeline;
 use axon_integration_tests::error_recovery_and_concurrency;
 use axon_integration_tests::hpo_tracker;
 use axon_integration_tests::multi_objective;
+use axon_integration_tests::phase4_e2e;
 use axon_integration_tests::tracker_registry;
 use axon_integration_tests::walkforward_registry;
 
@@ -212,4 +213,26 @@ fn contract_phase4_monitor_metrics() {
 #[test]
 fn contract_phase4_exchange_status() {
     contract::contract_exchange_order_status_terminal();
+}
+
+// ── Phase 4 端到端集成测试 ──
+
+#[test]
+fn phase4_e2e_full_trading_flow() {
+    phase4_e2e::run_full_trading_flow();
+}
+
+#[test]
+fn phase4_e2e_risk_rejection_flow() {
+    phase4_e2e::run_risk_rejection_flow();
+}
+
+#[test]
+fn phase4_e2e_circuit_breaker_flow() {
+    phase4_e2e::run_circuit_breaker_flow();
+}
+
+#[test]
+fn phase4_e2e_batch_trading_stats() {
+    phase4_e2e::run_batch_trading_stats();
 }

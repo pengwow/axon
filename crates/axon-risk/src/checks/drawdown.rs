@@ -3,6 +3,7 @@ use axon_core::portfolio::Portfolio;
 use crate::config::RiskConfig;
 use crate::error::{RiskReason, RiskResult};
 
+#[inline]
 pub fn check_drawdown(portfolio: &Portfolio, peak_value: f64, config: &RiskConfig) -> RiskResult {
     if peak_value <= 0.0 {
         return RiskResult::Allow;

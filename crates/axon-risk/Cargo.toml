@@ -15,3 +15,12 @@ tracing = "0.1"
 [dev-dependencies]
 pretty_assertions = "1"
 proptest = "1"
+criterion = "0.5"
+axon-oms = { path = "../axon-oms" }
+axon-monitor = { path = "../axon-monitor" }
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+
+[[bench]]
+name = "phase4_bench"
+path = "../../benches/phase4_bench.rs"
+harness = false

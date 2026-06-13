@@ -40,5 +40,7 @@ pub mod e2e_pipeline;
 /// 集成测试模块（按 crate 维度组织）
 pub mod hpo_tracker;
 pub mod multi_objective;
+/// Phase 4 端到端集成测试
+pub mod phase4_e2e;
 pub mod tracker_registry;
 pub mod walkforward_registry;

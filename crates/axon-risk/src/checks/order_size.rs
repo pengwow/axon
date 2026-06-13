@@ -3,6 +3,7 @@ use axon_core::order::Order;
 use crate::config::RiskConfig;
 use crate::error::RiskResult;
 
+#[inline]
 pub fn check_order_size(order: &Order, config: &RiskConfig) -> RiskResult {
     let Some(price) = order.order_type.limit_price() else {
         return RiskResult::Allow;

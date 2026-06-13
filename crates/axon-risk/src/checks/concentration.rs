@@ -2,6 +2,7 @@ use axon_core::portfolio::Portfolio;
 
 use crate::config::RiskConfig;
 use crate::error::{AlertSeverity, RiskAlert, RiskReason};
+use crate::utils::now_unix_secs;
 
 pub fn check_concentration(portfolio: &Portfolio, config: &RiskConfig) -> Vec<RiskAlert> {
     let mut alerts = Vec::new();
@@ -27,13 +28,6 @@ pub fn check_concentration(portfolio: &Portfolio, config: &RiskConfig) -> Vec<Ri
         }
     }
     alerts
-}
-
-fn now_unix_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
 }
 
 #[cfg(test)]

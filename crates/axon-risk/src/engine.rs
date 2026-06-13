@@ -9,6 +9,7 @@ use crate::circuit_breaker::CircuitBreaker;
 use crate::config::RiskConfig;
 use crate::error::{AlertSeverity, RiskAlert, RiskReason, RiskResult};
 use crate::metrics::RiskMetrics;
+use crate::utils::now_unix_secs;
 
 pub trait RiskEngine: Send + Sync {
     fn check_order(&self, order: &Order, portfolio: &Portfolio) -> RiskResult;
@@ -134,13 +135,6 @@ impl RiskEngine for DefaultRiskEngine {
         *self.daily_pnl.lock() = 0.0;
         self.circuit_breaker.reset();
     }
-}
-
-fn now_unix_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
 }
 
 #[cfg(test)]
