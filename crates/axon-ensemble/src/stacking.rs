@@ -8,9 +8,9 @@ use crate::types::{Action, ActionProbabilities, ActionType, ModelPrediction, Obs
 /// 元模型（线性层 + softmax）
 #[derive(Debug, Clone)]
 pub struct MetaModel {
-    /// 权重矩阵：[n_features, n_actions]
+    /// 权重矩阵：\[n_features, n_actions\]
     pub weights: Vec<Vec<f64>>,
-    /// 偏置：[n_actions]
+    /// 偏置：\[n_actions\]
     pub bias: Vec<f64>,
 }
 

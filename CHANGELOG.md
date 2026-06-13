@@ -650,36 +650,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 旧占位 `axon-core::timestamp` 模块（替换为 `axon-core::time`）
 
-### Fixed
+### Added (2026-06-13 批次)
 
-- `axon-cli` 中 `env!("TARGET")` 编译期不可用，改用 `std::env::consts::*`
-- `rust-toolchain.toml` 从 MSRV 1.75.0 升级到 stable（CI 仍强制 MSRV 校验）
-- `Price` / `Quantity` 的 `Eq`/`Ord`/`Hash` 错误地从 `f64` 派生（`f64` 不实现这些 trait），改为手工实现并使用 `to_bits` 保证 NaN 场景下的一致性
-- `Bar` 的 `Default` 与 `#[derive(Default)]` 冲突（E0119），通过删除手写实现解决
-- Clippy 警告 `derivable_impls`（`Bar`/`Side`/`OrderType` 的手写 `Default`）— 改用 `#[derive(Default)]` + `#[default]` 标记
-- Clippy 警告 `derive_ord_xor_partial_ord`（`Price`/`Quantity` 派生 `PartialOrd` + 手动 `Ord`）— 通过 `#[allow(clippy::derive_ord_xor_partial_ord)]` 在保持手工实现的前提下豁免（**技术约束，不可消除**：`f64` 根本性不实现 `Ord`；详细原因/风险/未来路径见 [price.rs:45-67](crates/axon-core/src/types/price.rs#L45-L67) 与 [quantity.rs:80-105](crates/axon-core/src/types/quantity.rs#L80-L105)）
-- L1 撮合引擎重构以适配 `axon-core::order` 重构后的 API：
+- **axon-core::Error 聚合 + ErrorContext 链**
+  - 新增 `axon_core::Error` 聚合枚举，通过 `#[from]` 自动转换子错误（Impact / Volatility / Latency / Queue / Other）
+  - 新增 `WithContext { context, source }` 变体，支持链式附加操作上下文
+  - 新增 `Error::is_retryable()` 统一可重试语义判断
+  - 新增 `ErrorContext` trait + `.context("...")` / `.with_context(|e| ...)` 扩展方法
+  - 新增 `Error::log()` 集成 `tracing` 框架
+  - `ImpactModelError` / `VolatilityError` / `LatencyModelError` 加字段文档
+- **各 crate Error::is_retryable() 统一**：
+  - `axon-walk-forward`: Io / Serialization 可重试；Config / InsufficientData / IndexOutOfBounds / LeakageDetected 不可重试
+  - `axon-hpo` / `axon-distributed` / `axon-rl::env` 同模式
+- **新增 crate: axon-ensemble**（Phase 3 P0 模型集成引擎）
+  - `types` / `traits` / `voting`（HardVote / SoftVote / WeightedVote）/ `stacking` / `dynamic`（动态加权）/ `manager` / `error`
+  - 8 个集成测试文件覆盖各策略
+- **新增 crate: axon-explain**（可解释性引擎）
+  - `types` / `traits` / `shap`（SHAP 值计算）/ `counterfactual`（反事实解释）/ `report`（多格式报告）/ `error`
+  - 7 个集成测试文件覆盖 SHAP / 反事实 / 报告
+- **axon-integration-tests 新增 3 个测试模块**：
+  - `contract`: API/数据契约稳定性测试
+  - `fuzz`: 基于 `proptest` 的属性测试 / 模糊测试
+  - `error_recovery_and_concurrency`: 错误恢复 + 并发场景
+- **axon-core Criterion benches**（`benches/core_bench.rs`, 628 行）
+  - 冲击模型 / 波动率估计 / 延迟模型 / 订单簿 / 订单状态机 / 事件路由 / 费用模型
+- **axon-rl Criterion benches**（`benches/rl_bench.rs`, 326 行）
+  - 观测空间 build / 奖励计算 / TradingEnv step / Action 转换
+- **axon-backtest `benches/impact_bench.rs` 增强**：补 `black_box` + `fill_ask_book_same_price` 辅助函数
+- **设计文档树 axon-design/**（60 个 .md）：分片化的元文档 / TDD 规范 / 阶段计划 / 补充
+- **实施计划与设计 docs/superpowers/**（11 个 .md）：PR 实施计划 + 前期设计文档
+- **axon-integration-tests/tests/integration_tests.rs 增强**：+93 行覆盖 contract / fuzz / error_recovery
+
+**Modified — 2026-06-13 批次**
+
+- **README.md 全面重写**：badge 更新（Phase 1A P0 → Phase 2 M3 训练管线）+ MVP 状态表（M0-M5 里程碑）+ 已覆盖能力清单
+- **LICENSE / LICENSE-APACHE 合并**：把完整 Apache 2.0 文本合并到 LICENSE，删除 LICENSE-APACHE
+- **axon-integration-tests/Cargo.toml**：新增 `axon-core` / `axon-backtest` workspace 依赖
+- **axon-data benches feature gate**：`criterion_group!` 按 4 个 feature 组合拆分（默认 / csv-only / parquet-only / 全部）
+- **axon-llm 大量应用 rust 2024 let-chain**：`react_agent.rs` 嵌套 `if let` 合并
+
+**Fixes — 2026-06-13 批次**
+
+- **registry 并发 register 版本号竞态**：原 `next_version()` 持 `index` DashMap 读锁计算 max+1，与 `storage.upload().await` 跨 .await 边界，并发 register 同一 model 可能产生重复 patch 版本号。修复方案：`ModelRegistry` 新增 `version_counters: DashMap<String, Arc<AtomicU64>>`，每个 model name 独立 `AtomicU64` 计数器，`fetch_add(SeqCst)` 原子分配，不持 `index` 锁、不跨 `.await`（详见 [registry.rs](file:///Users/liupeng/workspace/quant/axon/crates/axon-registry/src/registry.rs)）
+- **axon-backtest `ModelType::default()` clippy 警告**（`derivable_impls`）：手写 `impl Default` 改用 `#[derive(Default)]` + `#[default]` 标记 `Linear`
+- **axon-data benches CI 修复**：
+  - `use tempfile::NamedTempFile;` 加 `#[cfg(any(feature = "csv-source", feature = "parquet-source"))]` feature gate
+  - `use futures::StreamExt;` 在 `bench_parquet_stream` 内部冗余 import 删除（代码走全限定 `futures::StreamExt::for_each`）
+  - rustfmt 自动重排（`axon_data_bench.rs` import 顺序、`warmup_requests` 单行 lambda 等）
+- **axon-data / axon-core / axon-llm / axon-rl / axon-tracker / axon-registry / axon-backtest / axon-integration-tests 历史 clippy/fmt 修复**（无功能变更）：主要涉及：
+  - `axon-core`: `event/router.rs` `SystemOnlyCollector::default()` 冗余调用删除、`fee/table.rs` unused import 移入 test mod
+  - `axon-llm`: 大量 `if let` 链合并 + rustfmt
+  - `axon-backtest`: `impacted_engine.rs` 自定义 100+ 行并发测试代码 rustfmt 整理
+  - 等等
+- **CI 验证**：`cargo fmt --all -- --check` ✅ / `cargo clippy --workspace --all-targets -- -D warnings` ✅ / `cargo test --workspace` ✅（axon-data 67 tests + workspace 全量无回归）
+- **`axon-cli` 中 `env!("TARGET")` 编译期不可用**，改用 `std::env::consts::*`
+- **`rust-toolchain.toml` 从 MSRV 1.75.0 升级到 stable**（CI 仍强制 MSRV 校验）
+- **`Price` / `Quantity` 的 `Eq`/`Ord`/`Hash` 错误地从 `f64` 派生**（`f64` 不实现这些 trait），改为手工实现并使用 `to_bits` 保证 NaN 场景下的一致性
+- **`Bar` 的 `Default` 与 `#[derive(Default)]` 冲突**（E0119），通过删除手写实现解决
+- **Clippy 警告 `derivable_impls`**（`Bar`/`Side`/`OrderType` 的手写 `Default`）— 改用 `#[derive(Default)]` + `#[default]` 标记
+- **Clippy 警告 `derive_ord_xor_partial_ord`**（`Price`/`Quantity` 派生 `PartialOrd` + 手动 `Ord`）— 通过 `#[allow(clippy::derive_ord_xor_partial_ord)]` 在保持手工实现的前提下豁免（**技术约束，不可消除**：`f64` 根本性不实现 `Ord`；详细原因/风险/未来路径见 [price.rs:45-67](crates/axon-core/src/types/price.rs#L45-L67) 与 [quantity.rs:80-105](crates/axon-core/src/types/quantity.rs#L80-L105)）
+- **L1 撮合引擎重构以适配 `axon-core::order` 重构后的 API**：
   - 价格通过 `OrderType::limit_price()` 获取（`Order` 不再持有 `price` 字段）
   - 终态判断改用 `Order::status.is_terminal()`
   - 状态转换通过 `Order::apply_fill()` 公开 API 完成
   - 修复 `transition_to` 私有方法被外部调用的访问错误
   - 修复 `iter_mut()` 与 `self.method()` 借用冲突，改用 `AtomicU64::fetch_add` 直接访问
   - 修复 `BTreeMap::iter_mut().rev()` 不存在的问题，改为先收集价格列表再迭代
-- FOK 语义修正：撮合前先 `check_fok_fillable()` 预检订单簿深度，避免部分成交
-- IOC 语义修正：未完全成交的剩余部分自动调用 `Order::cancel()`
-- `Position::default()` 与 `#[derive(Default)]` 冲突（E0119）— 改用 derive 自动生成
-- `Clippy::derivable_impls` 警告（`Position` 手写 `Default`）— 改用 `#[derive(Default)]`
-- `Clippy::module_inception` 警告（`order::order` / `portfolio::portfolio` / `scheduler::scheduler` 模块与父模块同名）— 通过文件重命名 `module_name.rs` → `core.rs` 彻底消除
-- `Quantity::from_f64` 拒绝负数与 `Position` 需求冲突 — 解除负数限制，允许 `Position` 用负数表示空头持仓；同步更新 `Tick` 验证测试以反映新语义
-- `Symbol` 缺少 `Default` 实现 — 派生 `Default` 使其可用于 `Position::default()`
-- `Currency::default()` 期望返回 `USD` 而非 `[0, 0, 0]` — 手动实现 `Default` 返回 `Self::USD`
-- **CI 修复**（GitHub Actions `cargo fmt` + `cargo clippy -D warnings` 报错）：
-  - `axon-data/benches/axon_data_bench.rs`：`use tempfile::NamedTempFile;` 未在所有 feature 组合下使用 — 加 `#[cfg(any(feature = "csv-source", feature = "parquet-source"))]` feature gate
-  - `axon-data/benches/axon_data_bench.rs`：`use futures::StreamExt;` 在 `bench_parquet_stream` 内部未直接使用（代码走全限定 `futures::StreamExt::for_each`）— 改为注释说明并删除冗余 import
-  - `crates/axon-data/benches/axon_data_bench.rs` import 顺序 — 让 `MockSource` 排在 `CsvSource` 之后（rustfmt 调整）
-  - `crates/axon-explain/tests/explainer_test.rs:125` `ok_or` 闭包体缩进 — rustfmt 自动调整
-  - `crates/axon-llm/src/react_agent.rs:174` `if let` 链下代码块缩进 — rustfmt 自动调整
-  - **验证**：`cargo fmt --all -- --check` ✅ / `cargo clippy --workspace --all-targets -- -D warnings` ✅ / `cargo test --workspace` ✅（axon-data 67 tests + workspace 全量无回归）
+- **FOK 语义修正**：撮合前先 `check_fok_fillable()` 预检订单簿深度，避免部分成交
+- **IOC 语义修正**：未完全成交的剩余部分自动调用 `Order::cancel()`
+- **`Position::default()` 与 `#[derive(Default)]` 冲突**（E0119）— 改用 derive 自动生成
+- **`Clippy::derivable_impls` 警告**（`Position` 手写 `Default`）— 改用 `#[derive(Default)]`
+- **`Clippy::module_inception` 警告**（`order::order` / `portfolio::portfolio` / `scheduler::scheduler` 模块与父模块同名）— 通过文件重命名 `module_name.rs` → `core.rs` 彻底消除
+- **`Quantity::from_f64` 拒绝负数与 `Position` 需求冲突** — 解除负数限制，允许 `Position` 用负数表示空头持仓；同步更新 `Tick` 验证测试以反映新语义
+- **`Symbol` 缺少 `Default` 实现** — 派生 `Default` 使其可用于 `Position::default()`
+- **`Currency::default()` 期望返回 `USD` 而非 `[0, 0, 0]`** — 手动实现 `Default` 返回 `Self::USD`
+- **CI `Documentation` job 失败修复**（`RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` 在 `axon-data` / `axon-integration-tests` / `axon-ensemble` / `axon-registry` / `axon-backtest` / `axon-core` 报 1 error + 1 warning）：
+  - `axon-ensemble::MetaModel` 字段文档 `[n_features, n_actions]` / `[n_actions]` 被 rustdoc 解析为链接而失败 → 转义为 `\[n_features, n_actions\]` / `\[n_actions\]`（保留语义，不生成无效链接）
+  - `axon-registry::ModelRegistry` 模块文档 `Vec<ModelVersion>` 中 `<` 被识别为未闭合 HTML 标签 → 加反引号 `` `Vec<ModelVersion>` ``
+  - `axon-backtest::impact` 模块文档 4 处无效链接修复：
+    - `axon_backtest::matching::L1MatchingEngine` → `crate::matching::L1MatchingEngine`（修正作用域）
+    - `[Impact]` → `[`Impact`](axon_core::impact::Impact)`（修正外部 crate 路径）
+    - `[OrderBookSnapshot]` → `[`OrderBookSnapshot`](axon_core::market::OrderBookSnapshot)`
+    - `[python](self::python)`（`python` 模块受 `python` feature 门控，default feature 下不可见）→ 改为纯文本 `python` 模块
+  - `axon-core::impact::almgren_chriss::utility` 文档 `E[C]` / `Var[C]` 被解析为链接 → 转义为 `E\[C\]` / `Var\[C\]`
+  - `axon-core::volatility` 模块文档 `super::adaptive::AdaptiveImpactModel` 路径错误（adaptive 模块位于 `axon-core::src/impact/`，不在 volatility 父级下）→ 改为 `crate::impact::AdaptiveImpactModel`
+  - `axon-data::sources` 模块文档：`CsvSource` / `ParquetSource` 受 feature 门控，default feature 不可见 → 改为纯文本 `` `CsvSource` `` / `` `ParquetSource` ``（保留说明文字，不生成链接）
+  - `axon-data::traits` 模块文档 `[DataService]` 不在 `traits` 模块作用域内（`DataService` 在 crate root 重新导出）→ 改为 `[`DataService`](crate::DataService)`
+  - `axon-integration-tests::error_recovery_and_concurrency::test_concurrent_registry_registrations` 文档 `Arc<MemoryTracker>` 中 `<` 被识别为未闭合 HTML 标签 → 加反引号 `` `Arc<MemoryTracker>` ``
+  - 验收：`RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` ✅（CI `Documentation` job 通过），`cargo clippy --workspace --all-targets -- -D warnings` ✅（零回归）
 
 ### Security
 

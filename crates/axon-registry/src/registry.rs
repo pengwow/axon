@@ -14,7 +14,7 @@ use crate::types::{ModelMetadata, ModelStage, ModelVersion, SemVer};
 
 /// 模型注册表
 ///
-/// 内存索引：model_name -> Vec<ModelVersion>（按版本排序）
+/// 内存索引：model_name -> `Vec<ModelVersion>`（按版本排序）
 /// 版本号分配：每个 model name 独立的 `AtomicU64` 计数器，
 ///   用 `fetch_add` 原子递增，保证并发 register 下版本号唯一
 /// 持久化：每次索引变更后写入 `<base>/<name>/registry.json`

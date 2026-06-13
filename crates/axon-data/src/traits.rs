@@ -1,7 +1,7 @@
 //! 数据源 trait 抽象
 //!
 //! 所有数据源(Csv / Parquet / WebSocket / Mock / Replay)统一实现此 trait,
-//! 通过 `Box<dyn DataSource>` 注入到 [`DataService`]。
+//! 通过 `Box<dyn DataSource>` 注入到 [`DataService`](crate::DataService)。
 //!
 //! PR5:`stream()` 改 yield `RecordBatch`(列式大块),而非 `Tick`(行式)。
 

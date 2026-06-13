@@ -40,5 +40,8 @@ venv/
 *.log
 logs/
 
+# proptest 回归案例(由 proptest 自动管理,不进入版本控制)
+**/proptest-regressions/
+
 Cargo.lock
 

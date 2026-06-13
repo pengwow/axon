@@ -150,7 +150,7 @@ pub async fn test_hpo_failure_does_not_pollute_registry() {
 
 /// 场景 2：多线程并发注册到同一 model 的线程安全
 ///
-/// MemoryTracker 内部使用 Mutex，所以 Arc<MemoryTracker> 可跨线程共享。
+/// `MemoryTracker` 内部使用 Mutex，所以 `Arc<MemoryTracker>` 可跨线程共享。
 pub async fn test_concurrent_registry_registrations() {
     let tracker = Arc::new(MemoryTracker::new());
     let tmp = tempfile::tempdir().unwrap();

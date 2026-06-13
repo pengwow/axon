@@ -1,6 +1,6 @@
 //! 历史波动率估计器
 //!
-//! 为 [`AdaptiveImpactModel`](super::adaptive::AdaptiveImpactModel) 提供真实波动率输入。
+//! 为 [`AdaptiveImpactModel`](crate::impact::AdaptiveImpactModel) 提供真实波动率输入。
 //!
 //! # 模块
 //!
