@@ -1,0 +1,24 @@
+[package]
+name = "axon-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+description = "AXON Python 统一入口：封装 axon-rl、axon-backtest 等 crate 的 Python 绑定"
+
+[lib]
+name = "axon_quant"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["extension-module"] }
+axon-rl = { workspace = true, features = ["python"] }
+axon-tracker = { workspace = true, features = ["python"] }
+axon-registry = { workspace = true, features = ["python"] }
+axon-hpo = { workspace = true, features = ["python"] }
+axon-walk-forward = { workspace = true, features = ["python"] }
+axon-distributed = { workspace = true, features = ["python"] }

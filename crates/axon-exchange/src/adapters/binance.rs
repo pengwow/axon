@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::error::ExchangeError;
 use crate::traits::ExchangeAdapter;
@@ -71,6 +71,9 @@ impl ExchangeAdapter for BinanceAdapter {
     }
 
     fn market_data_rx(&self) -> mpsc::Receiver<WsMessage> {
-        self._market_rx.blocking_lock().take().expect("market_data_rx already taken")
+        self._market_rx
+            .blocking_lock()
+            .take()
+            .expect("market_data_rx already taken")
     }
 }

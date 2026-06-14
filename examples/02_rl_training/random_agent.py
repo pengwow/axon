@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 # ── 路径设置：让 `import _common` 走 examples 目录 ──
-_HERE = Path(__file__).resolve().parent
+_HERE = Path(__file__).resolve().parent.parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 

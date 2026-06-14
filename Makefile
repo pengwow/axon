@@ -93,6 +93,25 @@ tree: ## 打印依赖树
 install: ## 安装 axon CLI 到本地
 	cargo install --path crates/axon-cli --locked
 
+# ==================== Python ====================
+.PHONY: python-build
+python-build: ## 构建 Python wheel（包含 Rust 扩展）
+	maturin build --release
+
+.PHONY: python-develop
+python-develop: ## 安装 Python 包到当前环境（开发模式）
+	maturin develop
+
+.PHONY: python-install
+python-install: python-build ## 安装 Python wheel
+	pip install target/wheels/axon_quant-*.whl --force-reinstall
+
+.PHONY: python-clean
+python-clean: ## 清理 Python 构建产物
+	rm -rf target/wheels/
+	rm -rf python/axon_quant/*.so
+	rm -rf python/axon_quant/__pycache__
+
 # ==================== 验证完整流程 ====================
 .PHONY: verify
 verify: fmt-check clippy test build ## 完整本地验证（等价于 CI）
